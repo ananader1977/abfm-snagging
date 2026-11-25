@@ -46,7 +46,35 @@ const readPhoto = file => new Promise((resolve,reject) => {
 const photo = (src,label) => src ? '<figure><img src="'+e(src)+'" alt="'+label+'"><figcaption>'+label+'</figcaption></figure>' : '';
 const upload = (name,label) => field(name,label,'file','accept="image/jpeg,image/png,image/webp"');
 const rows = (head,data) => '<div class="wide"><table><thead><tr>'+head.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+data.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+function inspectionReport(c) {
+  const date = c.date ? c.date.split('-').reverse().join('/') : '';
+  const logo = globalThis.brand?.abfm || 'abfm.jpg';
+  const observations = c.snags.length ? c.snags : [{location:c.site, notes:'No reinstatement work is required.'}];
+  const pages = [];
+  for (let offset = 0; offset < observations.length; offset += 2) {
+    pages.push(observations.slice(offset, offset + 2));
+  }
+  const acknowledgement = '<section class="inspection-signatures"><h3>1. LESSEE ACKNOWLEDGEMENT &amp; SIGNATURES</h3>'+
+    '<p>I, ________________________, acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p>'+
+    '<p>Lessee Name &amp; Signature: ________________________________________</p>'+
+    '<p>Date: ____________________</p>'+
+    '<p>Inspector Name &amp; Signature: '+e(c.engineer)+' ________________________________________</p></section>';
+  return pages.map((page,index)=>{
+    const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
+      (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
+      '</td><td><strong>'+e(s.location)+'</strong><div class="inspection-comment">'+e(s.notes || s.description)+'</div></td><td>'+e(s.priority || '')+'</td></tr>').join('');
+    return '<section class="inspection-sheet"><div class="inspection-heading"><img src="'+e(logo)+'" alt="Al Bonian FM">'+
+      '<h2 id="inspection-title-'+index+'">End of Lease Inspection Report</h2></div>'+
+      '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(c.building || c.site)+'</div><div><strong>Location:</strong> '+e(c.site)+'</div>'+
+      '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Inspector:</strong> '+e(c.engineer)+'</div>'+
+      '<div class="inspection-count">Composed of '+pages.length+(pages.length===1?' Page':' Pages')+'</div></div>'+
+      '<table class="inspection-table"><colgroup><col><col><col><col></colgroup>'+
+      '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th><th scope="col">Priority</th></tr></thead>'+
+      '<tbody>'+observationRows+'</tbody></table>'+(index===pages.length-1?acknowledgement:'')+'</section>';
+  }).join('');
+}
 function report(c,type) {
+  const inspection = type === 'Inspection report';
   const tenant=type==='Tenant quotation';
   const quote=tenant||type==='DP World quotation';
   const wcr=type.includes('WCR');
@@ -59,10 +87,14 @@ function report(c,type) {
     return [n,e(s.location),d,before];
   });
   const dialog=document.createElement('dialog');
-  dialog.innerHTML='<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+  if (inspection) {
+    dialog.classList.add('inspection-dialog');
+    dialog.setAttribute('aria-labelledby','inspection-title-0');
+  }
+  dialog.innerHTML=(inspection ? inspectionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
     rows(heads,lines)+(quote?'<p>Total value '+money(total(c))+'<br>5% VAT '+money(amount(total(c),.05))+'<br>Grand total '+money(total(c)+amount(total(c),.05))+'</p>':'')+
-    (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':!quote?'<p>Lessee acknowledgement & signatures</p><p>I acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p><p>Inspector '+e(c.engineer)+' · Lessee signature ____________________</p>':'')+
+    (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
     '<button class="print">Print / Save PDF</button> <button class="dismiss secondary">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
@@ -77,7 +109,7 @@ function render() {
   const c=cases.find(item=>item.id===selected);
   if(!c){
     $('detail').innerHTML='<article><h1>New snagging request</h1><p class="error" id="error" role="alert"></p>'+
-      form('intake',field('client','Client')+field('site','Property / unit')+field('contact','Requester / contact')+field('request','Request details')+
+      form('intake',field('client','Client')+field('site','Property / unit')+'<label>Building name<input name="building"></label>'+field('contact','Requester / contact')+field('request','Request details')+
       '<label>Inspection CAFM task ID<input name="inspection"></label><label>Reinstatement CAFM task ID<input name="reinstatement"></label>','Register request')+'</article>';
     bind('intake',values=>{
       const ids=[values.inspection,values.reinstatement].map(x=>x.trim()).filter(Boolean);
@@ -89,7 +121,7 @@ function render() {
   }
   let panel='';
   if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('date','Inspection date','date'),'Assign inspection');
-  if(c.step===1)panel=form('snag',field('location','Snag location')+select('ref','Demo BOQ reference',boq.map(x=>x.ref))+field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
+  if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+select('ref','Demo BOQ reference',boq.map(x=>x.ref))+field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
   if(c.step===3||c.step===4){
     panel='<div class="supplier"><img id="rahati" src="'+(globalThis.brand?.rahati||'rahati.png')+'" alt="Rahati Bayti">Guardian</div>'+
@@ -114,7 +146,7 @@ function render() {
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
   bind('snag',async v=>{
     const line=boq.find(x=>x.ref===v.ref);
-    c.snags.push({...line,location:v.location,notes:v.notes,qty:Number(v.qty),before:await readPhoto(v.before)});
+    c.snags.push({...line,location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
     log(c,'Engineer confirmed '+line.ref);
   });
   bind('confirm',()=>{c.published=true;move(c,2);});
