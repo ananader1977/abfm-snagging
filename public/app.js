@@ -1,0 +1,149 @@
+'use strict';
+const $ = id => document.getElementById(id);
+const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const steps = ['Received','Inspection Assigned','Snags Confirmed','RFQ Issued','Quote Received','CS Approval','Client Submission','Client Approval','Authorized','In Progress','Reinspection','Closed'];
+const suppliers = ['Rahati Bayti','Guardian'];
+const boq = [
+  {ref:'DEMO-01', description:'Replace lock cylinder', unit:'Nos.', rate:125},
+  {ref:'DEMO-02', description:'Repaint internal wall', unit:'Sqm', rate:40},
+  {ref:'DEMO-03', description:'Deep clean office', unit:'Sqm', rate:18}
+];
+const money = n => new Intl.NumberFormat('en-AE',{style:'currency',currency:'AED'}).format(n);
+const amount = (price, quantity) => Math.round(price * quantity * 100) / 100;
+const duration = subtotal => subtotal < 25500 ? 6 : subtotal <= 42500 ? 10 : null;
+const total = c => c.snags.reduce((sum,s) => sum+Math.round(amount(s.rate,s.qty)*100),0)/100;
+const storeKey = 'abfm-snagging-demo-1';
+let cases = JSON.parse(localStorage.getItem(storeKey) || '[]');
+let selected = cases[0]?.id;
+const log = (c, event) => c.history.unshift({event, time:new Date().toISOString()});
+const move = (c, step) => { c.step=step; log(c,steps[step]); };
+const save = () => { localStorage.setItem(storeKey,JSON.stringify(cases)); render(); };
+const field = (name,label,type='text',attrs='') => '<label>'+label+'<input name="'+name+'" type="'+type+'" required '+attrs+'></label>';
+const options = items => items.map(v=>'<option>'+escape(v)+'</option>').join('');
+const select = (name,label,items) => '<label>'+label+'<select name="'+name+'">'+options(items)+'</select></label>';
+const form = (id, fields, action) => '<form id="'+id+'">'+fields+'<button>'+action+'</button></form>';
+const button = (id,label) => '<button type="button" id="'+id+'">'+label+'</button>';
+const e = escape;
+function bind(id, handler) {
+  const element=$(id);
+  if (!element) return;
+  const event=element.tagName==='FORM'?'submit':'click';
+  element.addEventListener(event, async ev=>{
+    ev.preventDefault();
+    const snapshot = JSON.stringify(cases);
+    const previousSelection=selected;
+    try { await handler(event==='submit'?Object.fromEntries(new FormData(element)):{}); save(); }
+    catch(error) { cases=JSON.parse(snapshot); selected=previousSelection; $('error').textContent=error.message; }
+  });
+}
+const readPhoto = file => new Promise((resolve,reject) => {
+  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 500000) return reject(Error('Choose a JPEG, PNG or WebP up to 500 KB.'));
+  const reader=new FileReader();
+  reader.onload=()=>resolve(reader.result);
+  reader.onerror=()=>reject(Error('Unable to read the photo.'));
+  reader.readAsDataURL(file);
+});
+const photo = (src,label) => src ? '<figure><img src="'+e(src)+'" alt="'+label+'"><figcaption>'+label+'</figcaption></figure>' : '';
+const upload = (name,label) => field(name,label,'file','accept="image/jpeg,image/png,image/webp"');
+const rows = (head,data) => '<div class="wide"><table><thead><tr>'+head.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+data.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+function report(c,type) {
+  const tenant=type==='Tenant quotation';
+  const quote=tenant||type==='DP World quotation';
+  const wcr=type.includes('WCR');
+  const heads=wcr?['No.','Work details','Before photo','After photo','Verified status']:tenant?['SN','Before photo','BOQ ref.','Description','Total']:quote?['SN','Before photo','BOQ ref.','Description','Unit','Qty','Unit price','Subtotal']:['No.','Plot / location','Observation','Before photo'];
+  const lines=c.snags.map((s,i)=>{
+    const n=i+1, d=e(s.description), before=photo(s.before,'Before');
+    if(wcr)return [n,d,before,photo(s.after,'After'),e(s.result||'Pending Engineer verification')];
+    if(tenant)return [n,before,e(s.ref),d,money(amount(s.rate,s.qty))];
+    if(quote)return [n,before,e(s.ref),d,e(s.unit),s.qty,money(s.rate),money(amount(s.rate,s.qty))];
+    return [n,e(s.location),d,before];
+  });
+  const dialog=document.createElement('dialog');
+  dialog.innerHTML='<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+    (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
+    rows(heads,lines)+(quote?'<p>Total value '+money(total(c))+'<br>5% VAT '+money(amount(total(c),.05))+'<br>Grand total '+money(total(c)+amount(total(c),.05))+'</p>':'')+
+    (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':!quote?'<p>Lessee acknowledgement & signatures</p><p>I acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p><p>Inspector '+e(c.engineer)+' · Lessee signature ____________________</p>':'')+
+    '<button class="print">Print / Save PDF</button> <button class="dismiss secondary">Close</button>';
+  document.body.append(dialog);
+  dialog.querySelector('.print').onclick=()=>window.print();
+  dialog.querySelector('.dismiss').onclick=()=>dialog.close();
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+  dialog.showModal();
+}
+function render() {
+  $('cases').innerHTML=cases.map((c,i)=>'<button class="secondary" id="case'+i+'">'+e(c.id)+' · '+e(c.site)+'</button>').join('');
+  for (const [i,c] of cases.entries()) $('case'+i).onclick=()=>{selected=c.id;render();};
+  $('new').onclick=()=>{selected=undefined;render();};
+  const c=cases.find(item=>item.id===selected);
+  if(!c){
+    $('detail').innerHTML='<article><h1>New snagging request</h1><p class="error" id="error" role="alert"></p>'+
+      form('intake',field('client','Client')+field('site','Property / unit')+field('contact','Requester / contact')+field('request','Request details')+
+      '<label>Inspection CAFM task ID<input name="inspection"></label><label>Reinstatement CAFM task ID<input name="reinstatement"></label>','Register request')+'</article>';
+    bind('intake',values=>{
+      const ids=[values.inspection,values.reinstatement].map(x=>x.trim()).filter(Boolean);
+      if (cases.some(item=>[item.inspection,item.reinstatement].some(x=>ids.includes(x)))) throw Error('This CAFM task is already linked.');
+      const id='SG-'+crypto.randomUUID().slice(0,8).toUpperCase();
+      const item={...values,id,step:0,snags:[],bids:[],history:[]};
+      log(item,'Client request registered'); cases.push(item); selected=id;
+    }); return;
+  }
+  let panel='';
+  if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('date','Inspection date','date'),'Assign inspection');
+  if(c.step===1)panel=form('snag',field('location','Snag location')+select('ref','Demo BOQ reference',boq.map(x=>x.ref))+field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
+  if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
+  if(c.step===3||c.step===4){
+    panel='<div class="supplier"><img id="rahati" src="'+(globalThis.brand?.rahati||'rahati.png')+'" alt="Rahati Bayti">Guardian</div>'+
+      form('bid',select('supplier','Supplier',suppliers)+field('reference','Quotation reference')+c.snags.map((s,i)=>field('rate'+i,'Supplier rate · '+e(s.ref),'number','min="0" step=".01"')).join(''),'Record quotation revision');
+    if(c.bids.length)panel+=rows(['Supplier','Reference','Bid total'],c.bids.map(b=>[e(b.supplier),e(b.reference),money(b.total)]))+
+      form('award','<label>Award recommendation<select name="bid">'+c.bids.map((b,i)=>'<option value="'+i+'">'+e(b.supplier+' · '+b.reference)+'</option>').join('')+'</select></label>'+field('reason','Award justification'),'Send to CS approval');
+  }
+  if(c.step===5)panel=form('cs',field('approver','CS approver'),'Record CS approval');
+  if(c.step===6)panel=form('send',field('submission','Client submission reference'),'Record submission to client');
+  if(c.step===7)panel=form('authorize',field('approval','Client approval reference')+field('order','PO / work order')+field('ordered','Order confirmation date','date')+
+    (duration(total(c))===null?field('days','Agreed calendar days','number','min="1" step="1"'):'<p>Maximum '+duration(total(c))+' days from order confirmation</p>'),'Record approval and authorize work');
+  if(c.step===8)panel=form('start',field('started','Actual start date','date'),'Start execution');
+  if(c.step===9)panel=form('wcr',field('wcr','Supplier WCR reference')+c.snags.map((s,i)=>s.result==='Pass'?'':upload('after'+i,'After photo · '+e(s.ref))).join(''),'Submit supplier WCR for reinspection');
+  if(c.step===10)panel=form('verify',field('inspector','Reinspecting ABFM Engineer')+c.snags.map((s,i)=>s.result==='Pass'?'':select('result'+i,'Decision · '+e(s.ref),['Pass','Failed','Partial'])).join('')+'<label>Engineer remarks<textarea name="remarks"></textarea></label>','Record verification');
+  $('detail').innerHTML='<article><h1>'+e(c.site)+'</h1><p class="meta">'+e(c.id)+' · '+e(c.client)+' · '+e(c.contact)+'</p><p>'+e(c.request)+'</p><p class="meta">CAFM '+e(c.inspection||'—')+' / '+e(c.reinstatement||'—')+'</p>'+
+    '<ol class="steps">'+steps.map((s,i)=>'<li '+(i===c.step?'aria-current="step"':'')+'>'+s+'</li>').join('')+'</ol><h2>'+steps[c.step]+'</h2>'+
+    (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
+    (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
+    (c.published?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation')+' '+button('tenantQuote','Tenant quotation')+' ':'')+
+    (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
+    '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
+  bind('assign',v=>{Object.assign(c,v);move(c,1);});
+  bind('snag',async v=>{
+    const line=boq.find(x=>x.ref===v.ref);
+    c.snags.push({...line,location:v.location,notes:v.notes,qty:Number(v.qty),before:await readPhoto(v.before)});
+    log(c,'Engineer confirmed '+line.ref);
+  });
+  bind('confirm',()=>{c.published=true;move(c,2);});
+  bind('no-work',()=>{c.published=true;c.noWork=true;log(c,'No reinstatement required');move(c,11);});
+  bind('rfq',v=>{c.rfq=v;move(c,3);});
+  bind('bid',v=>{
+    const rates=c.snags.map((s,i)=>Number(v['rate'+i]));
+    const bidTotal=c.snags.reduce((sum,s,i)=>sum+Math.round(amount(rates[i],s.qty)*100),0)/100;
+    c.bids.push({supplier:v.supplier,reference:v.reference,rates,total:bidTotal});
+    log(c,'Quotation '+v.reference+' from '+v.supplier);move(c,4);
+  });
+  bind('award',v=>{c.award=c.bids[Number(v.bid)].supplier;c.awardedBid=Number(v.bid);log(c,'Award recommendation · '+v.reason);move(c,5);});
+  bind('cs',v=>{log(c,'CS approved by '+v.approver);move(c,6);});
+  bind('send',v=>{log(c,'Client submission '+v.submission);move(c,7);});
+  bind('authorize',v=>{Object.assign(c,v);c.days=duration(total(c))??Number(v.days);log(c,'Client approval '+v.approval);move(c,8);});
+  bind('start',v=>{if(v.started<c.ordered)throw Error('Start date precedes order confirmation.');c.started=v.started;move(c,9);});
+  bind('wcr',async v=>{
+    for(const [i,s] of c.snags.entries())if(s.result!=='Pass')s.after=await readPhoto(v['after'+i]);
+    c.wcr=v.wcr;c.submitted=new Date().toLocaleDateString('en-GB',{timeZone:'Asia/Dubai'});log(c,'Supplier WCR '+v.wcr);move(c,10);
+  });
+  bind('verify',v=>{
+    if(Object.entries(v).some(([key,value])=>key.startsWith('result')&&value!=='Pass')&&!v.remarks.trim())throw Error('Enter rectification instructions for failed or partial work.');
+    for(const [i,s] of c.snags.entries())if(s.result!=='Pass')s.result=v['result'+i];
+    log(c,'Reinspection by '+v.inspector+' · '+v.remarks+' · '+c.snags.map(s=>s.ref+' '+s.result).join(', '));
+    move(c,c.snags.every(s=>s.result==='Pass')?11:9);
+  });
+  for(const [id,type] of [['inspectionReport','Inspection report'],['clientQuote','DP World quotation'],['tenantQuote','Tenant quotation'],['completion',c.step===11?'Final WCR':'Partial / draft WCR']]){
+    if($(id))$(id).onclick=()=>report(c,type);
+  }
+}
+if(globalThis.brand?.abfm)$('abfm').src=globalThis.brand.abfm;
+render();
