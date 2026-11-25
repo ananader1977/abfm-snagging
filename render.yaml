@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: abfm-snagging
+    runtime: node
+    branch: main
+    plan: free
+    region: frankfurt
+    buildCommand: node --check server.js && node --check public/app.js && node --check public/brand.js
+    startCommand: npm start
+    autoDeployTrigger: commit
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: SNAGGING_USERNAME
+        sync: false
+      - key: SNAGGING_PASSWORD
+        sync: false
