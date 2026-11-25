@@ -29,3 +29,6 @@
   .inspection-photo{max-height:46mm}
   .inspection-table tr{break-inside:avoid}
 }
+
+.sign-in{display:block;width:min(420px,94%);margin:60px auto}.logout{margin:0}.logout button{white-space:nowrap}.sign-in input{box-sizing:border-box}
+@media(max-width:520px){header{flex-wrap:wrap}header .demo{order:1;flex-basis:100%;max-width:none;margin:0}.logout{margin-left:auto}}
