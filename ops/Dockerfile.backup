@@ -1,0 +1,6 @@
+FROM postgres:17-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends awscli ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY ops/backup-postgres.sh /usr/local/bin/abfm-backup
+COPY ops/backup-env.py /usr/local/bin/abfm-backup-env.py
+CMD ["python3","/usr/local/bin/abfm-backup-env.py"]
