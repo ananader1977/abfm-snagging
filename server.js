@@ -81,7 +81,9 @@ const routes = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']],
   ['/supplier', ['supplier.html','text/html; charset=utf-8']],
-  ['/supplier.js', ['supplier.js','text/javascript; charset=utf-8']]
+  ['/supplier.js', ['supplier.js','text/javascript; charset=utf-8']],
+  ['/operations', ['operations.html','text/html; charset=utf-8']],
+  ['/operations.js', ['operations.js','text/javascript; charset=utf-8']]
 ]);
 function respondJson(res,status,data){
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
@@ -104,13 +106,17 @@ async function stateApi(req,res,pathname,session){
     return respondJson(res,200,{revision,records});
   }
   const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
-  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
+  const operationsWrite=pathname==='/api/operations-action'&&req.method==='PUT';
+  if(identity.role==='operations'){
+    if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
+    if(!operationsWrite)return respondJson(res,403,{error:'Operations access is limited to editing a Rahati quotation during CS approval.'});
+  }else if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
   if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
   if(req.method==='GET'&&pathname==='/api/export'){
     res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
     return respondJson(res,200,await storage.get());
   }
-  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':null;
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
     req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
@@ -127,23 +133,48 @@ async function stateApi(req,res,pathname,session){
   try{payload=JSON.parse(Buffer.concat(chunks).toString());}
   catch{return respondJson(res,400,{error:'Invalid save payload.'});}
   if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
-  if(mode==='account'){
+  if(mode==='account'||mode==='operations-account'){
+    if(identity.role!=='abfm')return respondJson(res,403,{error:'Only ABFM can configure user accounts.'});
     if(typeof payload.password!=='string'||payload.password.length<16||payload.password.length>256)return respondJson(res,400,{error:'Use a unique password of 16 to 256 characters.'});
-    const account='rahati-bayti';
-    if(username===account)return respondJson(res,409,{error:'The ABFM username cannot be used for Rahati.'});
+    const isOperations=mode==='operations-account';
+    const account=isOperations?'operations':'rahati-bayti';
+    const role=isOperations?'operations':'rahati';
+    const supplier=isOperations?null:'Rahati Bayti';
+    if(username===account)return respondJson(res,409,{error:'The account username cannot be the same as the ABFM username.'});
     const digest=await passwordDigest(payload.password);
     const result=await pool.query(`
       WITH change AS (
-        INSERT INTO snagging_user(username,password_digest,role,supplier) VALUES($1,$2,'rahati','Rahati Bayti')
+        INSERT INTO snagging_user(username,password_digest,role,supplier) VALUES($1,$2,$4,$5)
         ON CONFLICT(username) DO UPDATE SET password_digest=EXCLUDED.password_digest, enabled=true
-        WHERE snagging_user.role='rahati' RETURNING username
+        WHERE snagging_user.role=$4 RETURNING username
       )
       INSERT INTO snagging_security_audit(actor,target_user,action)
-      SELECT $3,username,'Rahati account password configured' FROM change
-    `,[account,digest,identity.username]);
+      SELECT $3,username,$6 FROM change
+    `,[account,digest,identity.username,role,supplier,isOperations?'Operations account password configured':'Rahati account password configured']);
     if(!result.rowCount)return respondJson(res,409,{error:'That username is assigned to another role.'});
     for(const [key,value] of sessions)if(value.username===account)sessions.delete(key);
     return respondJson(res,200,{username:account});
+  }
+  if(operationsWrite){
+    if(identity.role!=='operations')return respondJson(res,403,{error:'Only the operations account can edit a quotation.'});
+    if(!Number.isSafeInteger(payload.revision)||!Number.isInteger(payload.bidIndex)||!Array.isArray(payload.rates))return respondJson(res,400,{error:'The quotation edit is incomplete.'});
+    const {revision,state}=await storage.get();
+    if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before editing.'});
+    const record=state.cases.find(c=>c.id===payload.caseId);
+    if(!record)return respondJson(res,404,{error:'Case not found.'});
+    if(record.step!==5)return respondJson(res,403,{error:'Rahati quotations can only be edited after they are sent to CS approval.'});
+    const bid=record.bids[payload.bidIndex];
+    if(!bid||bid.supplier!=='Rahati Bayti'||record.award!=='Rahati Bayti'||record.awardedBid!==payload.bidIndex)return respondJson(res,403,{error:'Only the selected Rahati quotation can be edited during CS approval.'});
+    if(payload.rates.length!==record.snags.length||payload.rates.some(rate=>!Number.isFinite(rate)||rate<0||rate>1e8||Math.round(rate*100)/100!==rate))return respondJson(res,400,{error:'Enter a valid rate for each BOQ line.'});
+    const cents=value=>Math.round(value*100);
+    const vendorTotal=record.snags.reduce((sum,line)=>sum+cents(line.budget*line.qty),0);
+    const sellingTotal=record.snags.reduce((sum,line)=>sum+cents(line.rate*line.qty),0);
+    const lineRatesExceed=record.snags.every((line,index)=>cents(line.rate)>cents(payload.rates[index]));
+    if(!(vendorTotal>0&&BigInt(sellingTotal)*100n>=BigInt(vendorTotal)*121n)&&!lineRatesExceed)return respondJson(res,400,{error:'The edit would violate the existing quotation pricing rule.'});
+    bid.rates=payload.rates;
+    bid.total=record.snags.reduce((sum,line,index)=>sum+Math.round(line.qty*payload.rates[index]*100),0)/100;
+    record.history.unshift({event:'Operations updated Rahati quotation during CS approval',time:new Date().toISOString()});
+    return respondJson(res,200,await storage.write(revision,state,identity.username,'operations'));
   }
   if(mode==='supplier'){
     if(identity.role!=='rahati')return respondJson(res,403,{error:'Only the assigned supplier can submit this action.'});
@@ -195,7 +226,16 @@ const server = http.createServer((req, res) => {
     res.writeHead(303, {Location:'/login'});
     return res.end();
   }
-  if(session&&session.role!=='abfm'){
+  if(session?.role==='operations'){
+    if(pathname==='/'||pathname==='/index.html'){
+      res.writeHead(303,{Location:'/operations'});
+      return res.end();
+    }
+    if(!['/operations','/operations.js','/style.css','/app.webmanifest'].includes(pathname)){
+      res.writeHead(403);
+      return res.end('This page is restricted to the operations account.');
+    }
+  }else if(session&&session.role!=='abfm'){
     if(pathname==='/'||pathname==='/index.html'){
       res.writeHead(303,{Location:'/supplier'});
       return res.end();
