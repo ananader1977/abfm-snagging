@@ -5,6 +5,9 @@ const {spawn}=require('node:child_process');
 const {once}=require('node:events');
 const {randomBytes}=require('node:crypto');
 
+if(process.env.SNAGGING_STAGE==='true'&&!process.env.TEST_DATABASE_URL){
+  test('staging build requires TEST_DATABASE_URL so PostgreSQL checks cannot be skipped',()=>assert.fail('Render staging must pass its managed DATABASE_URL as TEST_DATABASE_URL.'));
+}
 test('isolated hosted PostgreSQL round-trip, account permissions, and restart',{skip:!process.env.TEST_DATABASE_URL,timeout:90000},async ()=>{
   const {Pool}=require('pg');
   const database=new Pool({connectionString:process.env.TEST_DATABASE_URL});
