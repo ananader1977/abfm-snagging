@@ -70,3 +70,39 @@
 .quote-heading{display:grid;grid-template-columns:66px 1fr 66px;border-bottom:0}.quote-heading h2{text-align:center;text-decoration:underline;font-family:Tahoma,Arial,sans-serif}.quote-footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;font:9px Tahoma,Arial,sans-serif;margin-top:10px;break-inside:avoid}
 
 .scope-results{display:grid;gap:6px;max-height:240px;overflow:auto}.scope-results:empty{display:none}.scope-results button{width:100%;text-align:left;white-space:normal}.scope-results button[aria-pressed="true"]{background:#ffe4d5;color:#672a08;outline:2px solid #b43a00;outline-offset:-2px}#scopeStatus{margin:0}
+
+#rahatiPrintOptions label{margin-bottom:8px}
+.rahati-quotation-dialog{width:min(1020px,96vw);max-height:92vh}
+.rahati-sheet{font:13px Arial,sans-serif;color:#172246;margin-bottom:16px}
+.rahati-heading{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;border-bottom:2px solid #073477;padding-bottom:7px}
+.rahati-heading img{width:min(190px,100%);height:auto}
+.rahati-heading div{text-align:center}
+.rahati-heading h2{font-size:19px;margin:0}
+.rahati-identifiers{display:flex;justify-content:space-between;margin:8px 0}
+.rahati-meta{border-top:1px solid #0c4b7c}
+.rahati-meta>div{display:grid;grid-template-columns:105px 1fr 85px;gap:8px;border-bottom:1px solid #b2c9d5;padding:5px}
+.rahati-meta span{text-align:center;overflow-wrap:anywhere}
+.rahati-sheet h3{background:#dfeef2;padding:5px;margin:8px 0 0}
+.rahati-rfq{text-align:right;margin:8px 0;font-weight:bold}
+.rahati-sheet table{border-collapse:collapse;margin:7px 0;font-size:inherit}
+.rahati-sheet :is(th,td){border:1px solid #91aebb;padding:5px;overflow-wrap:anywhere;vertical-align:top}
+.rahati-sheet thead{background:#c9e3ed;color:#08294b}
+.rahati-items table{table-layout:fixed}
+.rahati-items th:first-child{width:6%}
+.rahati-items th:nth-child(2){width:39%}
+.rahati-detailed .rahati-items th:nth-child(2){width:31%}
+.rahati-detailed .rahati-items th:nth-child(3){width:16%}
+.rahati-items figure img{max-width:100%;max-height:76px}
+.rahati-sheet .rahati-totals{width:min(350px,100%);margin:8px 0 10px auto;break-inside:avoid}
+.rahati-totals td{text-align:right}
+.rahati-totals tr:last-child{background:#c9e3ed;font-weight:bold}
+.rahati-terms{display:grid;grid-template-columns:2fr 1fr 1fr;border:1px solid #91aebb;break-inside:avoid}
+.rahati-terms>div{padding:7px;min-height:54px}
+.rahati-terms>div+div{border-left:1px solid #91aebb}
+@media print{
+  dialog.rahati-quotation-dialog[open]{page:quotation;max-height:none;overflow:visible;margin:0;padding:0}
+  .rahati-sheet{font-size:10pt;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .rahati-sheet .wide{overflow:visible}
+  .rahati-sheet thead{display:table-header-group}
+  .rahati-sheet tr{break-inside:avoid}
+}
