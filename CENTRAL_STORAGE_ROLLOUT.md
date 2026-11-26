@@ -6,7 +6,7 @@ This branch stages the ABFM operator flow. It must stay off the production servi
 
 Provision a separate PostgreSQL database in the app region. In a separate staging web service set DATABASE_URL to its internal connection string. Keep credentials in the host’s environment settings. Install package dependencies with npm install before starting the web service. Startup initializes the tables in the selected database and fails if a database connection is unavailable. The production Blueprint on main should continue deploying the current app during testing.
 
-The staged web API shares cases, BOQ and attachments across authenticated browser and installed-app sessions. PostgreSQL transactions protect writes and reference allocation. A stale revision returns a conflict instead of overwriting recent changes. Browser storage is read only for the optional migration action. The staging scope is a single, authenticated ABFM operator role.
+The staged web API shares cases, BOQ and attachments across authenticated browser and installed-app sessions. PostgreSQL transactions protect writes and reference allocation. A stale revision returns a conflict instead of overwriting recent changes. Browser storage is read only for the optional migration action. The staged browser interface is for ABFM. The staged API additionally supports DB-backed restricted accounts and allowlisted, read-only supplier/client payloads. Complete and test the supplier and client workflows before granting external users access. ABFM can export its current server state as JSON.
 
 ## Migration
 
