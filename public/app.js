@@ -1105,6 +1105,22 @@ if(globalThis.brand?.abfm)$('abfm').src=globalThis.brand.abfm;
 render();
 
 
+const vendorAccountForm=$('vendorAccountForm');
+if(vendorAccountForm)vendorAccountForm.onsubmit=async event=>{
+  event.preventDefault();
+  const status=$('vendorAccountStatus');
+  const button=vendorAccountForm.querySelector('button');
+  button.disabled=true;
+  try{
+    const result=await fetch('/api/rahati-account',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:vendorAccountForm.elements.newPassword.value})});
+    const body=await result.json();
+    if(!result.ok)throw Error(body.error);
+    vendorAccountForm.reset();
+    status.textContent='Account ready. Username: '+body.username+'. Share the password securely with Rahati Bayti.';
+  }catch(error){status.textContent=error.message;}
+  finally{button.disabled=false;}
+};
 const installApp=$('installApp');
 if(installApp){
   let installPrompt;
