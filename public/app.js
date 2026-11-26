@@ -345,7 +345,7 @@ function buildQuotationWorkbook(data) {
   }
   parts['[Content_Types].xml']='<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
     (drawings.length?'<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>':'')+'</Types>';
-  const width=[42,58,25,17,17,17,17,17];
+  const width=[42,58,25,17,17,17,22,25,25];
   const sheetRows=data.lines.map((line,i)=>{
     const row=i+1, bright=i===0||data.classNames.has(row);
     const height=pictureRows.has(i)?58:Math.min(180,Math.max(18,...line.map((v,j)=>15*Math.ceil(String(v).length/(width[j]||17)))));
@@ -362,9 +362,8 @@ function buildQuotationWorkbook(data) {
   return quotationZip(parts);
 }
 
-function downloadQuotationExcel(dialog,filename) {
-  const excel=buildQuotationWorkbook(quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet')));
-  const url=URL.createObjectURL(excel);
+function downloadExcelFile(data,filename) {
+  const url=URL.createObjectURL(buildQuotationWorkbook(data));
   const link=document.createElement('a');
   link.href=url;
   link.download=filename.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.xlsx';
@@ -390,6 +389,20 @@ function rahatiQuotationFields(c,reference,template) {
     ...c.rahatiQuotationDetails?.[template],reference
   };
 }
+function downloadQuotationExcel(dialog,filename) {
+  downloadExcelFile(quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet')),filename);
+}
+function quotationSummaryData(c) {
+  const awarded=c.bids[c.awardedBid];
+  const bid=awarded||c.bids.at(-1);
+  if(!bid||!Number.isFinite(bid.total)||!c.snags.every(line=>Number.isFinite(line.rate)))return null;
+  return {lines:[
+    ['Quotation summary'],
+    ['Quotation reference','Case ID','Client','Property / location','Supplier','Supplier quotation reference','Supplier selection','Total supplier cost (AED, excl. VAT)','Total ABFM selling price (AED, excl. VAT)'],
+    [quotationFields(c,false).reference,c.id,c.client,c.site,bid.supplier,bid.reference,awarded?'Awarded':'Latest quotation received',bid.total,total(c)]
+  ],classNames:new Set([2]),pictures:[]};
+}
+
 function rahatiQuotationDocument(c,reference,rates,template) {
   const detailed=template==='detailed';
   const details=rahatiQuotationFields(c,reference,template);
@@ -674,6 +687,9 @@ function supplierWcrForm(c) {
     '<label>Work completed / remarks<textarea name="work'+i+'">'+e(draft?.lines[i]?.work||'')+'</textarea></label></fieldset>').join('');
   return form('wcr',field('wcr','Supplier WCR reference','text','value="'+e(draft?.reference||c.wcr||'')+'"')+
     '<label>Report remarks<textarea name="wcrRemarks">'+e(draft?.remarks||'')+'</textarea></label>'+
+    field('supplierSign','Supplier signature (type full name)','text','value="'+e(draft?.signature?.name||'')+'"')+
+    '<label>Upload handwritten signature (optional)<input name="supplierSignImage" type="file" accept="image/jpeg,image/png,image/webp"></label>'+
+    (draft?.signature?.image?'<p class="meta">A signature image is saved.</p>':'')+
     photoFields+button('previewWcr','Save and preview reinspection report'),'Submit supplier WCR for reinspection');
 }
 async function collectSupplierWcr(c,values,submitting) {
@@ -688,7 +704,25 @@ async function collectSupplierWcr(c,values,submitting) {
     const work=line.result==='Pass'?(previous?.lines[i]?.work||''):String(values['work'+i]||'').trim();
     lines.push({after,work});
   }
-  return {reference,remarks:String(values.wcrRemarks||'').trim(),lines};
+  const signer=String(values.supplierSign||'').trim();
+  if(submitting&&!signer)throw Error('Enter the supplier signature before submitting.');
+  const file=values.supplierSignImage;
+  const image=file?.size?await readPhoto(file):previous?.signature?.image||'';
+  return {reference,remarks:String(values.wcrRemarks||'').trim(),lines,signature:{name:signer,image}};
+}
+function reinspectionSignatures(c,submission,verification) {
+  const supplier=submission?.signature;
+  const engineer=verification?.signature;
+  const date=verification?.date?.split('-').reverse().join('/')||'Pending Engineer inspection';
+  const signature=(value,label)=>{
+    const image=value?.image?'<img class="wcr-signature-image" src="'+e(value.image)+'" alt="'+label+' handwritten signature">':'';
+    return '<span>'+e(value?.name||'________________________')+'</span>'+image;
+  };
+  return '<section class="wcr-signatures"><h3>Reinspection sign-off</h3>'+
+    '<p><strong>Date of inspection:</strong> '+e(date)+'</p>'+
+    '<p><strong>'+e(c.award||'Rahati Bayti')+' signature:</strong> '+signature(supplier,'Supplier')+'</p>'+
+    '<p><strong>ABFM Engineer signature:</strong> '+signature(engineer,'ABFM Engineer')+'</p>'+
+    (verification?.engineer?'<p><strong>ABFM Engineer:</strong> '+e(verification.engineer)+'</p>':'')+'</section>';
 }
 function previewSupplierWcr(c,draft) {
   const dialog=document.createElement('dialog');
@@ -700,6 +734,7 @@ function previewSupplierWcr(c,draft) {
     rows(['BOQ Ref.','Work details','Before photo','After photo','Supplier remarks'],
       c.snags.map((line,i)=>[e(line.ref),e(line.description),photo(line.before,'Before'),
         photo(draft.lines[i].after,'After')||'Photo pending',e(draft.lines[i].work)]))+
+    reinspectionSignatures(c,draft,null)+
     '<p>Draft saved. Return to editing to make changes, then submit it for Engineer reinspection.</p>'+
     '<button type="button">Return to editing</button>';
   document.body.append(dialog);
@@ -730,7 +765,7 @@ function report(c,type) {
   dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     (wcr?'<p>Quotation ref. '+e(quotationFields(c,false).reference)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p><p class="inspection-comment"><strong>Supplier report remarks:</strong> '+e(c.supplierWcr?.remarks||'–')+'</p>':'')+
     rows(heads,lines)+
-    (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
+    (wcr?reinspectionSignatures(c,c.supplierWcr,c.reinspectionVerification):''))+
     (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
     (quote&&c.step<7?quotationEditor(quotationFieldSpecs.filter(([key])=>!tenant||key!=='contact'),quotationFields(c,tenant))+'<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> ':'')+
     '<button class="print">Print / Save PDF</button> '+(quote?'<button class="excel secondary" type="button">Download Excel</button> ':'')+
@@ -821,13 +856,16 @@ function render() {
     (duration(total(c))===null?field('days','Agreed calendar days','number','min="1" step="1"'):'<p>Maximum '+duration(total(c))+' days from order confirmation</p>'),'Record approval and authorize work');
   if(c.step===8)panel=form('start',field('started','Actual start date','date'),'Start execution');
   if(c.step===9)panel=supplierWcrForm(c);
-  if(c.step===10)panel=form('verify',field('inspector','Reinspecting ABFM Engineer')+c.snags.map((s,i)=>s.result==='Pass'?'':select('result'+i,'Decision · '+e(s.ref),['Pass','Failed','Partial'])).join('')+'<label>Engineer remarks<textarea name="remarks"></textarea></label>','Record verification');
+  if(c.step===10)panel=form('verify',field('inspector','Reinspecting ABFM Engineer','text','value="'+e(c.engineer||'')+'"')+
+    field('inspectionDate','Date of inspection','date')+field('engineerSign','ABFM Engineer signature (type full name)')+
+    '<label>Upload handwritten signature (optional)<input name="engineerSignImage" type="file" accept="image/jpeg,image/png,image/webp"></label>'+c.snags.map((s,i)=>s.result==='Pass'?'':select('result'+i,'Decision · '+e(s.ref),['Pass','Failed','Partial'])).join('')+'<label>Engineer remarks<textarea name="remarks"></textarea></label>','Record verification');
   $('detail').innerHTML='<article><h1>'+e(c.site)+'</h1><p class="meta">'+e(c.id)+' · '+e(c.client)+' · '+e(c.contact)+'</p>'+(c.quotationReference?'<p class="meta">Quotation reference '+e(c.quotationReference)+'</p>':'')+'<p>'+e(c.request)+'</p><p class="meta">CAFM '+e(c.inspection||'—')+' / '+e(c.reinstatement||'—')+'</p>'+
     '<ol class="steps">'+steps.map((s,i)=>'<li '+(i===c.step?'aria-current="step"':'')+'>'+s+'</li>').join('')+'</ol><h2>'+steps[c.step]+'</h2>'+
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
     (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':''),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
     (c.published||(c.step===1&&c.snags.length)?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
+    (c.bids.length?button('quoteSummary','Download quotation summary · Excel')+' ':'')+
     (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
   if ($('snag')) {
@@ -957,6 +995,11 @@ function render() {
   });
   bind('authorize',v=>{Object.assign(c,v);c.days=duration(total(c))??Number(v.days);log(c,'Client approval '+v.approval);move(c,8);});
   bind('start',v=>{if(v.started<c.ordered)throw Error('Start date precedes order confirmation.');c.started=v.started;move(c,9);});
+  if($('quoteSummary'))$('quoteSummary').onclick=()=>{
+    const summary=quotationSummaryData(c);
+    if(!summary){$('error').textContent='A supplier quotation and valid ABFM selling prices are required.';return;}
+    downloadExcelFile(summary,quotationFields(c,false).reference+'-Quotation-Summary');
+  };
   if($('previewWcr'))$('previewWcr').onclick=async ()=>{
     const formElement=$('wcr');
     if(!formElement.reportValidity())return;
@@ -977,17 +1020,22 @@ function render() {
   bind('wcr',async v=>{
     const report=await collectSupplierWcr(c,v,true);
     for(const [i,line] of c.snags.entries())if(line.result!=='Pass')line.after=report.lines[i].after;
-    c.supplierWcr={reference:report.reference,remarks:report.remarks,lines:report.lines.map(line=>({work:line.work}))};
+    c.supplierWcr={reference:report.reference,remarks:report.remarks,signature:report.signature,lines:report.lines.map(line=>({work:line.work}))};
+    delete c.reinspectionVerification;
     delete c.wcrDraft;
     c.wcr=report.reference;
     c.submitted=new Date().toLocaleDateString('en-GB',{timeZone:'Asia/Dubai'});
     log(c,'Supplier WCR '+report.reference);
     move(c,10);
   });
-  bind('verify',v=>{
+  bind('verify',async v=>{
+    const engineer=String(v.inspector||'').trim(), name=String(v.engineerSign||'').trim();
+    if(!engineer||!name||!v.inspectionDate)throw Error('Enter the Engineer name, signature and date of inspection.');
+    const signature={name,image:v.engineerSignImage?.size?await readPhoto(v.engineerSignImage):''};
     if(Object.entries(v).some(([key,value])=>key.startsWith('result')&&value!=='Pass')&&!v.remarks.trim())throw Error('Enter rectification instructions for failed or partial work.');
     for(const [i,s] of c.snags.entries())if(s.result!=='Pass')s.result=v['result'+i];
-    log(c,'Reinspection by '+v.inspector+' · '+v.remarks+' · '+c.snags.map(s=>s.ref+' '+s.result).join(', '));
+    c.reinspectionVerification={engineer,date:v.inspectionDate,signature};
+    log(c,'Reinspection on '+v.inspectionDate+' by '+engineer+' · '+v.remarks+' · '+c.snags.map(s=>s.ref+' '+s.result).join(', '));
     move(c,c.snags.every(s=>s.result==='Pass')?11:9);
   });
   for(const [id,type] of [['inspectionReport','Inspection report'],['clientQuote','DP World quotation'],['tenantQuote','Tenant quotation'],['completion',c.step===11?'Final WCR':'Partial / draft WCR']]){
