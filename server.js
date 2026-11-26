@@ -107,7 +107,7 @@ async function stateApi(req,res,pathname,session){
   }
   const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
   if(identity.role==='operations'){
-    if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
+    if(req.method==='GET'&&pathname==='/api/state'){const result=await storage.get();return respondJson(res,200,{...result,state:{...result.state,cases:result.state.cases.filter(record=>record.step!==3&&record.step!==9)}});}
     return respondJson(res,403,{error:'The operations account has read-only access.'});
   }
   if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
