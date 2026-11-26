@@ -14,6 +14,27 @@ const duration = subtotal => subtotal < 25500 ? 6 : subtotal <= 42500 ? 10 : nul
 const total = c => c.snags.reduce((sum,s) => sum+Math.round(amount(s.rate,s.qty)*100),0)/100;
 const storeKey = 'abfm-snagging-demo-1';
 let cases = JSON.parse(localStorage.getItem(storeKey) || '[]');
+const quotationPrefix='JAFZADPWDEOL-Q1126-';
+const sequenceKey='abfm-quotation-sequence-1126';
+function allocateQuotationReference(records,storedSequence) {
+  const used=records.flatMap(record=>[record.quotationReference,record.quotationDetails?.client?.reference,record.quotationDetails?.tenant?.reference]);
+  const numbers=used.map(ref=>String(ref||'').match(/^JAFZADPWDEOL-Q1126-(\d+)(?:-Tenant)?$/i))
+    .filter(Boolean).map(match=>Number(match[1])).filter(Number.isSafeInteger);
+  const count=Math.max(1199,Number.isSafeInteger(storedSequence)?storedSequence:0,...numbers)+1;
+  return {count,reference:quotationPrefix+count};
+}
+function nextQuotationReference() {
+  const next=allocateQuotationReference(cases,Number(localStorage.getItem(sequenceKey)));
+  localStorage.setItem(sequenceKey,String(next.count));
+  return next.reference;
+}
+for(const record of cases){
+  if(record.step<7&&!record.quotationReference){
+    try{record.quotationReference=nextQuotationReference();}
+    catch{break;}
+  }
+}
+try{localStorage.setItem(storeKey,JSON.stringify(cases));}catch{/* Existing records can still be read. */}
 let selected = cases[0]?.id;
 const log = (c, event) => c.history.unshift({event, time:new Date().toISOString()});
 const move = (c, step) => { c.step=step; log(c,steps[step]); };
@@ -541,7 +562,7 @@ function quotationFields(c,tenant) {
   const days=c.days||duration(total(c));
   return {
     client:c.client||'',property:c.building||c.site||'',contact:c.contact||'',location:c.site||'',
-    reference:tenant?c.id+'-Tenant':c.id,date:part('year')+'-'+part('month')+'-'+part('day'),
+    reference:(c.quotationReference||c.id)+(tenant?'-Tenant':''),date:part('year')+'-'+part('month')+'-'+part('day'),
     task:c.inspection||c.reinstatement||c.id,subject:'EOL Reinstatement Works – '+c.site,
     requirement:'End of lease reinstatement',additional:'',validity:'30 Days',delivery:'',
     completion:days?days+' days from order confirmation':'To be agreed',
@@ -643,6 +664,49 @@ function quotationDocument(c,tenant) {
     '<div class="quote-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-footer"><span>Document Code: ABFM-ADM-QUO-001-2022-00<br>Rev. 0</span><span>Classification: Quotation</span><span>Issue No.: 1 Date: 29 Aug. 2022</span></div></section>';
 }
+
+function supplierWcrForm(c) {
+  const draft=c.wcrDraft||c.supplierWcr;
+  const photoFields=c.snags.map((line,i)=>line.result==='Pass'?'':
+    '<fieldset><legend>'+e(line.ref)+' · '+e(line.description)+'</legend>'+
+    '<label>After photo <input type="file" name="after'+i+'" accept="image/jpeg,image/png,image/webp"></label>'+
+    (draft?.lines[i]?.after||line.after?'<p class="meta">An after photo is saved. Choose a file to replace it.</p>':'')+
+    '<label>Work completed / remarks<textarea name="work'+i+'">'+e(draft?.lines[i]?.work||'')+'</textarea></label></fieldset>').join('');
+  return form('wcr',field('wcr','Supplier WCR reference','text','value="'+e(draft?.reference||c.wcr||'')+'"')+
+    '<label>Report remarks<textarea name="wcrRemarks">'+e(draft?.remarks||'')+'</textarea></label>'+
+    photoFields+button('previewWcr','Save and preview reinspection report'),'Submit supplier WCR for reinspection');
+}
+async function collectSupplierWcr(c,values,submitting) {
+  const previous=c.wcrDraft||c.supplierWcr;
+  const reference=String(values.wcr||'').trim();
+  if(!reference)throw Error('Enter the supplier WCR reference.');
+  const lines=[];
+  for(const [i,line] of c.snags.entries()){
+    const file=values['after'+i];
+    const after=file?.size?await readPhoto(file):previous?.lines[i]?.after||line.after||'';
+    if(submitting&&!after&&line.result!=='Pass')throw Error('Add an after photo for '+line.ref+' before submitting.');
+    const work=line.result==='Pass'?(previous?.lines[i]?.work||''):String(values['work'+i]||'').trim();
+    lines.push({after,work});
+  }
+  return {reference,remarks:String(values.wcrRemarks||'').trim(),lines};
+}
+function previewSupplierWcr(c,draft) {
+  const dialog=document.createElement('dialog');
+  dialog.className='inspection-dialog';
+  dialog.setAttribute('aria-labelledby','supplier-wcr-title');
+  dialog.innerHTML='<h2 id="supplier-wcr-title">Reinspection report preview</h2>'+
+    '<p>Supplier: '+e(c.award)+' · WCR: '+e(draft.reference)+' · Site: '+e(c.site)+'</p>'+
+    '<p class="inspection-comment"><strong>Report remarks:</strong> '+e(draft.remarks||'–')+'</p>'+
+    rows(['BOQ Ref.','Work details','Before photo','After photo','Supplier remarks'],
+      c.snags.map((line,i)=>[e(line.ref),e(line.description),photo(line.before,'Before'),
+        photo(draft.lines[i].after,'After')||'Photo pending',e(draft.lines[i].work)]))+
+    '<p>Draft saved. Return to editing to make changes, then submit it for Engineer reinspection.</p>'+
+    '<button type="button">Return to editing</button>';
+  document.body.append(dialog);
+  dialog.querySelector('button').onclick=()=>dialog.close();
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+  dialog.showModal();
+}
 function report(c,type) {
   const inspection = type === 'Inspection report';
   const tenant=type==='Tenant quotation';
@@ -652,8 +716,8 @@ function report(c,type) {
     $('error').textContent=priceGateMessage;
     return;
   }
-  const heads=['No.','Work details','Before photo','After photo','Verified status'];
-  const lines=wcr?c.snags.map((s,i)=>[i+1,e(s.description),photo(s.before,'Before'),photo(s.after,'After'),e(s.result||'Pending Engineer verification')]):[];
+  const heads=['No.','Work details','Before photo','After photo','Supplier remarks','Verified status'];
+  const lines=wcr?c.snags.map((s,i)=>[i+1,e(s.description),photo(s.before,'Before'),photo(s.after,'After'),e(c.supplierWcr?.lines[i]?.work||''),e(s.result||'Pending Engineer verification')]):[];
   const dialog=document.createElement('dialog');
   if (inspection) {
     dialog.classList.add('inspection-dialog');
@@ -664,7 +728,7 @@ function report(c,type) {
     dialog.setAttribute('aria-labelledby','quote-title');
   }
   dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
-    (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
+    (wcr?'<p>Quotation ref. '+e(quotationFields(c,false).reference)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p><p class="inspection-comment"><strong>Supplier report remarks:</strong> '+e(c.supplierWcr?.remarks||'–')+'</p>':'')+
     rows(heads,lines)+
     (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
     (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
@@ -729,7 +793,7 @@ function render() {
       const ids=[values.inspection,values.reinstatement].map(x=>x.trim()).filter(Boolean);
       if (cases.some(item=>[item.inspection,item.reinstatement].some(x=>ids.includes(x)))) throw Error('This CAFM task is already linked.');
       const id='SG-'+crypto.randomUUID().slice(0,8).toUpperCase();
-      const item={...values,id,step:0,snags:[],bids:[],history:[]};
+      const item={...values,id,quotationReference:nextQuotationReference(),step:0,snags:[],bids:[],history:[]};
       log(item,'Client request registered'); cases.push(item); selected=id;
     }); return;
   }
@@ -756,9 +820,9 @@ function render() {
   if(c.step===7)panel=form('authorize',field('approval','Client approval reference')+field('order','PO / work order')+field('ordered','Order confirmation date','date')+
     (duration(total(c))===null?field('days','Agreed calendar days','number','min="1" step="1"'):'<p>Maximum '+duration(total(c))+' days from order confirmation</p>'),'Record approval and authorize work');
   if(c.step===8)panel=form('start',field('started','Actual start date','date'),'Start execution');
-  if(c.step===9)panel=form('wcr',field('wcr','Supplier WCR reference')+c.snags.map((s,i)=>s.result==='Pass'?'':upload('after'+i,'After photo · '+e(s.ref))).join(''),'Submit supplier WCR for reinspection');
+  if(c.step===9)panel=supplierWcrForm(c);
   if(c.step===10)panel=form('verify',field('inspector','Reinspecting ABFM Engineer')+c.snags.map((s,i)=>s.result==='Pass'?'':select('result'+i,'Decision · '+e(s.ref),['Pass','Failed','Partial'])).join('')+'<label>Engineer remarks<textarea name="remarks"></textarea></label>','Record verification');
-  $('detail').innerHTML='<article><h1>'+e(c.site)+'</h1><p class="meta">'+e(c.id)+' · '+e(c.client)+' · '+e(c.contact)+'</p><p>'+e(c.request)+'</p><p class="meta">CAFM '+e(c.inspection||'—')+' / '+e(c.reinstatement||'—')+'</p>'+
+  $('detail').innerHTML='<article><h1>'+e(c.site)+'</h1><p class="meta">'+e(c.id)+' · '+e(c.client)+' · '+e(c.contact)+'</p>'+(c.quotationReference?'<p class="meta">Quotation reference '+e(c.quotationReference)+'</p>':'')+'<p>'+e(c.request)+'</p><p class="meta">CAFM '+e(c.inspection||'—')+' / '+e(c.reinstatement||'—')+'</p>'+
     '<ol class="steps">'+steps.map((s,i)=>'<li '+(i===c.step?'aria-current="step"':'')+'>'+s+'</li>').join('')+'</ol><h2>'+steps[c.step]+'</h2>'+
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
@@ -893,9 +957,32 @@ function render() {
   });
   bind('authorize',v=>{Object.assign(c,v);c.days=duration(total(c))??Number(v.days);log(c,'Client approval '+v.approval);move(c,8);});
   bind('start',v=>{if(v.started<c.ordered)throw Error('Start date precedes order confirmation.');c.started=v.started;move(c,9);});
+  if($('previewWcr'))$('previewWcr').onclick=async ()=>{
+    const formElement=$('wcr');
+    if(!formElement.reportValidity())return;
+    const button=$('previewWcr');
+    const submit=formElement.querySelector('button:not([type])');
+    button.disabled=submit.disabled=true;
+    const previous=c.wcrDraft;
+    try{
+      const draft=await collectSupplierWcr(c,Object.fromEntries(new FormData(formElement)),false);
+      c.wcrDraft={...draft,lines:draft.lines.map((line,i)=>({work:line.work,after:line.after===c.snags[i].after?'':line.after}))};
+      save();
+      previewSupplierWcr(c,draft);
+    }catch(error){
+      c.wcrDraft=previous;
+      $('error').textContent=error.message;
+    }finally{button.disabled=submit.disabled=false;}
+  };
   bind('wcr',async v=>{
-    for(const [i,s] of c.snags.entries())if(s.result!=='Pass')s.after=await readPhoto(v['after'+i]);
-    c.wcr=v.wcr;c.submitted=new Date().toLocaleDateString('en-GB',{timeZone:'Asia/Dubai'});log(c,'Supplier WCR '+v.wcr);move(c,10);
+    const report=await collectSupplierWcr(c,v,true);
+    for(const [i,line] of c.snags.entries())if(line.result!=='Pass')line.after=report.lines[i].after;
+    c.supplierWcr={reference:report.reference,remarks:report.remarks,lines:report.lines.map(line=>({work:line.work}))};
+    delete c.wcrDraft;
+    c.wcr=report.reference;
+    c.submitted=new Date().toLocaleDateString('en-GB',{timeZone:'Asia/Dubai'});
+    log(c,'Supplier WCR '+report.reference);
+    move(c,10);
   });
   bind('verify',v=>{
     if(Object.entries(v).some(([key,value])=>key.startsWith('result')&&value!=='Pass')&&!v.remarks.trim())throw Error('Enter rectification instructions for failed or partial work.');
