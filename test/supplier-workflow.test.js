@@ -18,7 +18,7 @@ test('only assigned supplier can submit once and receives no selling rates',()=>
   applySupplierAction(c,rahati,{action:'quote',rates:[70],reference:'RB-1'});
   assert.equal(c.bids[0].total,140);
   assert.equal(c.snags[0].rate,121);
-  assert.equal(supplierStage(rahati,c),null);
+  assert.equal(supplierStage(rahati,c),'quotation-submitted');
   assert.throws(()=>applySupplierAction(c,rahati,{action:'quote',rates:[70],reference:'RB-1'}),e=>e.status===403);
 });
 test('reinspection draft and signatures require award; completed cases remain visible',()=>{
