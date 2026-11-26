@@ -3,42 +3,85 @@ const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const steps = ['Received','Inspection Assigned','Snags Confirmed','RFQ Issued','Quote Received','CS Approval','Client Submission','Client Approval','Authorized','In Progress','Reinspection','Closed'];
 const suppliers = ['Rahati Bayti','Guardian'];
-const demoBoq = [
-  {ref:'DEMO-01', description:'Replace lock cylinder', unit:'Nos.', rate:125,budget:100},
-  {ref:'DEMO-02', description:'Repaint internal wall', unit:'Sqm', rate:40,budget:30},
-  {ref:'DEMO-03', description:'Deep clean office', unit:'Sqm', rate:18,budget:14}
-];
 const money = n => new Intl.NumberFormat('en-AE',{style:'currency',currency:'AED'}).format(n);
 const amount = (price, quantity) => Math.round(price * quantity * 100) / 100;
 const duration = subtotal => subtotal < 25500 ? 6 : subtotal <= 42500 ? 10 : null;
 const total = c => c.snags.reduce((sum,s) => sum+Math.round(amount(s.rate,s.qty)*100),0)/100;
 const storeKey = 'abfm-snagging-demo-1';
-let cases = JSON.parse(localStorage.getItem(storeKey) || '[]');
-const quotationPrefix='JAFZADPWDEOL-Q1126-';
-const sequenceKey='abfm-quotation-sequence-1126';
-function allocateQuotationReference(records,storedSequence) {
-  const used=records.flatMap(record=>[record.quotationReference,record.quotationDetails?.client?.reference,record.quotationDetails?.tenant?.reference]);
-  const numbers=used.map(ref=>String(ref||'').match(/^JAFZADPWDEOL-Q1126-(\d+)(?:-Tenant)?$/i))
-    .filter(Boolean).map(match=>Number(match[1])).filter(Number.isSafeInteger);
-  const count=Math.max(1199,Number.isSafeInteger(storedSequence)?storedSequence:0,...numbers)+1;
-  return {count,reference:quotationPrefix+count};
-}
-function nextQuotationReference() {
-  const next=allocateQuotationReference(cases,Number(localStorage.getItem(sequenceKey)));
-  localStorage.setItem(sequenceKey,String(next.count));
-  return next.reference;
-}
-for(const record of cases){
-  if(record.step<7&&!record.quotationReference){
-    try{record.quotationReference=nextQuotationReference();}
-    catch{break;}
-  }
-}
-try{localStorage.setItem(storeKey,JSON.stringify(cases));}catch{/* Existing records can still be read. */}
-let selected = cases[0]?.id;
+const catalogKey='abfm-boq-rate-card-v1';
+let cases=[],catalog=null,selected,revision=null;
+let writePending=false,formEdited=false;
 const log = (c, event) => c.history.unshift({event, time:new Date().toISOString()});
 const move = (c, step) => { c.step=step; log(c,steps[step]); };
-const save = () => { localStorage.setItem(storeKey,JSON.stringify(cases)); render(); };
+
+function deviceRecords(){
+  return {cases:JSON.parse(localStorage.getItem(storeKey)||'[]'),catalog:JSON.parse(localStorage.getItem(catalogKey)||'null')};
+}
+async function stateRequest(path,method='GET',body){
+  const response=await fetch(path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+  const result=await response.json().catch(()=>null);
+  if(!response.ok)throw Error(result?.error||'The server did not confirm the save. Try again.');
+  if(!result?.state||!Number.isSafeInteger(result.revision))throw Error('The server returned an incomplete response.');
+  return result;
+}
+function acceptState(result,redraw=true){
+  const existing=new Map(cases.map(item=>[item.id,item]));
+  cases=result.state.cases.map(item=>{
+    const local=existing.get(item.id);
+    if(!local)return item;
+    for(const key of Object.keys(local))if(!Object.hasOwn(item,key))delete local[key];
+    return Object.assign(local,item);
+  });
+  catalog=result.state.catalog;
+  revision=result.revision;
+  selected=cases.some(c=>c.id===selected)?selected:cases[0]?.id;
+  if(redraw){formEdited=false;render();}
+}
+async function save(path='/api/state',data={cases,catalog},redraw=true){
+  if(revision===null)throw Error('Load the online records before saving.');
+  if(writePending)throw Error('Another save is in progress. Try again.');
+  writePending=true;
+  try{
+    acceptState(await stateRequest(path,'PUT',{revision,state:data}),redraw);
+    $('syncStatus').textContent='Saved to the server.';
+  }finally{writePending=false;}
+}
+async function refreshState(){
+  if(writePending)return;
+  const result=await stateRequest('/api/state');
+  if(!writePending&&(revision===null||result.revision>revision))acceptState(result);
+  $('syncStatus').textContent='Connected to the server.';
+}
+async function startOnline(){
+  const status=$('syncStatus'), migrate=$('migrateDevice'), refresh=$('refreshCases');
+  $('new').disabled=true;
+  $('boqFile').disabled=true;
+  let local=null;
+  try{local=deviceRecords();}
+  catch{status.textContent='This browser has local data that could not be read. Keep it intact for recovery.';}
+  if(local?.cases.length||local?.catalog?.length){
+    migrate.hidden=false;
+    migrate.onclick=async ()=>{
+      migrate.disabled=true;
+      try{
+        await refreshState();
+        await save('/api/migration',local);
+        status.textContent='Migration verified against the server response. The browser copy was preserved.';
+      }catch(error){status.textContent=error.message;}
+      finally{migrate.disabled=false;}
+    };
+  }
+  refresh.onclick=async ()=>{
+    try{await refreshState();}
+    catch(error){status.textContent=error.message;}
+  };
+  try{await refreshState();}
+  catch(error){status.textContent=error.message;}
+  document.addEventListener('input',event=>{if(event.target.closest('form'))formEdited=true;});
+  setInterval(()=>{
+    if(!document.hidden&&!formEdited&&!writePending&&!document.querySelector('dialog[open]'))refreshState().catch(error=>{status.textContent=error.message;});
+  },12000);
+}
 const field = (name,label,type='text',attrs='') => '<label>'+label+'<input name="'+name+'" type="'+type+'" required '+attrs+'></label>';
 const options = items => items.map(v=>'<option>'+escape(v)+'</option>').join('');
 const select = (name,label,items) => '<label>'+label+'<select name="'+name+'">'+options(items)+'</select></label>';
@@ -59,7 +102,7 @@ function bind(id, handler) {
     const previousSelection=selected;
     const control=event==='submit'?element.querySelector('button[type="submit"],button:not([type])'):element;
     if(control)control.disabled=true;
-    try { await handler(event==='submit'?Object.fromEntries(new FormData(element)):{}); save(); }
+    try { await handler(event==='submit'?Object.fromEntries(new FormData(element)):{}); await save(); }
     catch(error) {
       cases=originalCases.map((original,i)=>{
         for(const key of Object.keys(original))delete original[key];
@@ -108,8 +151,7 @@ const photo = (src,label) => src ? '<figure><img src="'+e(src)+'" alt="'+label+'
 const upload = (name,label) => field(name,label,'file','accept="image/jpeg,image/png,image/webp"');
 const rows = (head,data) => '<div class="wide"><table><thead><tr>'+head.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+data.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
 
-const catalogKey = 'abfm-boq-rate-card-v1';
-const activeBoq = () => JSON.parse(localStorage.getItem(catalogKey) || 'null') || demoBoq;
+const activeBoq=()=>catalog||[];
 const cents = value => Math.round(value * 100);
 const readRate = value => {
   const normalized = String(value ?? '').trim().replace(/^AED\s*/i,'').replace(/,/g,'');
@@ -171,8 +213,7 @@ async function importBoq(file) {
     catalog.push({ref:qualified,description,unit:value('Unit'),budget:readRate(value('Vendor Budget')),rate:readRate(value('ABFM BOQ Price'))});
   }
   if(!catalog.length || !catalog.some(line=>line.rate!==null&&line.budget!==null))throw Error('The workbook contains no usable rate pairs.');
-  localStorage.setItem(catalogKey,JSON.stringify(catalog));
-  return catalog.length;
+  return catalog;
 }
 const validSellRate = (snag, vendorRate) => Number.isFinite(snag.rate) && Number.isFinite(vendorRate) && cents(snag.rate)>cents(vendorRate);
 function budgetUplift(c) {
@@ -470,10 +511,10 @@ function showRahatiQuotation(c,bidForm) {
   dialog.querySelector('.print').onclick=()=>window.print();
   dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,reference+'-Rahati-'+template);
   dialog.querySelector('.vendor-summary').onclick=()=>downloadExcelFile(rahatiExcelSummary(c,reference,rates,template),reference+'-Rahati-Summary');
-  wireQuotationEditor(dialog,renderSheet,updates=>{
+  wireQuotationEditor(dialog,renderSheet,async updates=>{
     const previous=c.rahatiQuotationDetails;
     c.rahatiQuotationDetails={...previous,[template]:updates};
-    try{localStorage.setItem(storeKey,JSON.stringify(cases));}
+    try{await save('/api/state',{cases,catalog},false);}
     catch(error){c.rahatiQuotationDetails=previous;throw Error('Unable to save quotation details: '+error.message);}
     reference=updates.reference;
     bidForm.elements.reference.value=reference;
@@ -531,14 +572,14 @@ function inspectionEditor(c) {
   return quotationEditor([...inspectionHeaderFields,...items],inspectionFields(c),'Edit inspection report');
 }
 function attachInspectionEditor(dialog,c) {
-  wireQuotationEditor(dialog,()=>'<div class="inspection-document">'+inspectionReport(c)+'</div>',updates=>{
+  wireQuotationEditor(dialog,()=>'<div class="inspection-document">'+inspectionReport(c)+'</div>',async updates=>{
     const old=inspectionFields(c);
     if(!Object.keys(updates).some(key=>updates[key]!==String(old[key]??'')))return '';
     const previous=c.inspectionDetails;
     const history=c.history.slice();
     c.inspectionDetails=updates;
     log(c,'Inspection report details updated');
-    try{save();}
+    try{await save();}
     catch(error){c.inspectionDetails=previous;c.history=history;throw Error('Unable to save inspection details: '+error.message);}
     return 'Inspection report saved.';
   },'.inspection-document');
@@ -625,11 +666,11 @@ function wireQuotationEditor(dialog,renderSheet,saveDetails,sheetSelector='.quot
   };
   edit.onclick=()=>toggle(true);
   editor.querySelector('.cancel-edit').onclick=()=>{editor.reset();editor.querySelector('.error').textContent='';toggle(false);};
-  editor.onsubmit=event=>{
+  editor.onsubmit=async event=>{
     event.preventDefault();
     const updates=Object.fromEntries(Array.from(new FormData(editor),([key,value])=>[key,value.trim()]));
     try{
-      const result=saveDetails(updates);
+      const result=await saveDetails(updates);
       if(result){
         dialog.querySelector(sheetSelector).outerHTML=renderSheet();
         for(const [key,value] of Object.entries(updates))editor.elements[key].defaultValue=value;
@@ -640,7 +681,7 @@ function wireQuotationEditor(dialog,renderSheet,saveDetails,sheetSelector='.quot
   };
 }
 function attachQuotationEditor(dialog,c,tenant) {
-  wireQuotationEditor(dialog,()=>quotationDocument(c,tenant),updates=>{
+  wireQuotationEditor(dialog,()=>quotationDocument(c,tenant),async updates=>{
     if(c.step>=7)throw Error('These quotation details are locked after client submission.');
     const previousFields=quotationFields(c,tenant);
     const changed=Object.keys(updates).filter(key=>updates[key]!==String(previousFields[key]??''));
@@ -651,7 +692,7 @@ function attachQuotationEditor(dialog,c,tenant) {
     c.quotationDetails={...c.quotationDetails,[quotationKey(tenant)]:updates};
     if(reapproval)move(c,5);
     log(c,(tenant?'Tenant':'DP World')+' quotation details updated');
-    try{save();}
+    try{await save();}
     catch(error){
       Object.assign(c,previous);
       throw Error('Unable to save quotation details: '+error.message);
@@ -827,11 +868,13 @@ function render() {
   for (const [i,c] of cases.entries()) $('case'+i).onclick=()=>{selected=c.id;render();};
   $('new').onclick=()=>{selected=undefined;render();};
   const catalog=activeBoq();
-  $('boqStatus').textContent=catalog===demoBoq?'Demo rates':catalog.length+' BOQ lines loaded';
+  $('new').disabled=false;
+  $('boqFile').disabled=false;
+  $('boqStatus').textContent=catalog.length?catalog.length+' BOQ lines loaded':'Upload the approved consolidated BOQ.';
   $('boqFile').onchange=async event=>{
     try{
-      await importBoq(event.target.files[0]);
-      render();
+      const imported=await importBoq(event.target.files[0]);
+      await save('/api/state',{cases,catalog:imported});
     }catch(error){$('boqStatus').textContent=error.message;}
     finally{event.target.value='';}
   };
@@ -844,7 +887,7 @@ function render() {
       const ids=[values.inspection,values.reinstatement].map(x=>x.trim()).filter(Boolean);
       if (cases.some(item=>[item.inspection,item.reinstatement].some(x=>ids.includes(x)))) throw Error('This CAFM task is already linked.');
       const id='SG-'+crypto.randomUUID().slice(0,8).toUpperCase();
-      const item={...values,id,quotationReference:nextQuotationReference(),step:0,snags:[],bids:[],history:[]};
+      const item={...values,id,step:0,snags:[],bids:[],history:[]};
       log(item,'Client request registered'); cases.push(item); selected=id;
     }); return;
   }
@@ -903,7 +946,7 @@ function render() {
       resultList.replaceChildren();
       const query=fields.scopeSearch.value.trim();
       const {matches,partial}=findScopes(catalog,query);
-      const demoHint=catalog===demoBoq?' Only demo items are loaded. Import ABFM_Consolidated_BOQ.xlsx to search your BOQ.':'';
+      const demoHint=!catalog.length?' Import the approved BOQ to search scopes.':'';
       status.textContent=matches.length
         ? matches.length+(partial?' related scope(s). Select the correct line.':' matching scope(s).')+demoHint
         : (query?'No matching scope. Try a shorter phrase.':'Type a few words from the scope.')+demoHint;
@@ -1026,7 +1069,7 @@ function render() {
     try{
       const draft=await collectSupplierWcr(c,Object.fromEntries(new FormData(formElement)),false);
       c.wcrDraft={...draft,lines:draft.lines.map((line,i)=>({work:line.work,after:line.after===c.snags[i].after?'':line.after}))};
-      save();
+      await save();
       previewSupplierWcr(c,draft);
     }catch(error){
       c.wcrDraft=previous;
