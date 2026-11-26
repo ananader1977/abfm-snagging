@@ -167,10 +167,19 @@ function quotationAllowed(c,bid) {
 }
 const priceGateMessage = 'Resolve the pricing before approval. The selling subtotal must be at least 21% above Vendor Budget or each selling rate must exceed the selected vendor rate.';
 const changedRate = (snag, vendorRate) => Number.isFinite(snag.budget) && cents(snag.budget)!==cents(vendorRate);
+function vendorBudget(snag,catalog) {
+  if(Number.isFinite(snag.budget))return snag.budget;
+  const budget=catalog.find(line=>line.ref===snag.ref)?.budget;
+  return Number.isFinite(budget)?budget:null;
+}
 const lineKey = (s,i) => i+':'+s.ref;
 function recordBid(c, supplier, reference, rates) {
   if (!suppliers.includes(supplier) || typeof reference!=='string' || !reference.trim() || rates.length!==c.snags.length || rates.some(rate=>rate===null)) {
     throw Error('A quotation reference and a valid rate for every line are required.');
+  }
+  if(supplier==='Rahati Bayti'){
+    const catalog=activeBoq();
+    for(const snag of c.snags)snag.budget=vendorBudget(snag,catalog);
   }
   const bidTotal=c.snags.reduce((sum,s,i)=>sum+Math.round(amount(rates[i],s.qty)*100),0)/100;
   c.bids.push({supplier,reference:reference.trim(),rates,total:bidTotal});
@@ -186,7 +195,8 @@ function downloadFile(name, content, type) {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function downloadRateCard(c) {
-  const data={caseId:c.id,lines:c.snags.map((s,i)=>({key:lineKey(s,i),ref:s.ref,description:s.description,unit:s.unit,qty:s.qty,budget:s.budget??null}))};
+  const catalog=activeBoq();
+  const data={caseId:c.id,lines:c.snags.map((s,i)=>({key:lineKey(s,i),ref:s.ref,description:s.description,unit:s.unit,qty:s.qty,budget:vendorBudget(s,catalog)}))};
   const payload=JSON.stringify(data).replace(/</g,'\\u003c');
   const html='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Rahati Bayti quotation</title>'+
     '<style>body{font:16px system-ui;margin:24px}table{border-collapse:collapse;width:100%}td,th{padding:8px;text-align:left;border:1px solid #ccc}input{font:inherit;width:110px}button{font:inherit;margin:16px 0}caption{text-align:left}</style>'+
@@ -357,7 +367,9 @@ function render() {
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
   if(c.step===3||c.step===4){
     panel='<div class="supplier"><img id="rahati" src="'+(globalThis.brand?.rahati||'rahati.png')+'" alt="Rahati Bayti">Guardian</div>'+
-      form('bid',select('supplier','Supplier',suppliers)+field('reference','Quotation reference')+c.snags.map((s,i)=>field('rate'+i,'Supplier rate · '+e(s.ref),'number','min="0" max="100000000" step=".01"'+(Number.isFinite(s.budget)?' value="'+s.budget+'"':''))).join(''),'Record quotation revision');
+      form('bid',select('supplier','Supplier',suppliers)+field('reference','Quotation reference')+
+      '<p id="bidBudgetStatus" class="meta" role="status"></p>'+
+      c.snags.map((s,i)=>field('rate'+i,'Supplier rate · '+e(s.ref),'number','min="0" max="100000000" step=".01"')).join(''),'Record quotation revision');
     panel+=button('vendorCard','Download Rahati rate card')+
       form('vendorReturn',field('quotation','Import quotation returned by Rahati','file','accept=".json,application/json"'),'Import Rahati quotation');
     if(c.bids.length)panel+=rows(['Supplier','Reference','Bid total'],c.bids.map(b=>[e(b.supplier),e(b.reference),money(b.total)]))+
@@ -423,6 +435,28 @@ function render() {
     });
     showMatches();
   }
+  if ($('bid')) {
+    const fields=$('bid').elements;
+    const inputs=c.snags.map((_,i)=>fields['rate'+i]);
+    const budgets=c.snags.map(s=>vendorBudget(s,catalog));
+    const drafts=new Map();
+    let supplier=fields.supplier.value;
+    const loadRates=()=>{
+      const rahati=supplier==='Rahati Bayti';
+      const saved=drafts.get(supplier);
+      inputs.forEach((input,i)=>{input.value=saved?.[i]??(rahati?budgets[i]??'':'');});
+      const missing=budgets.filter(rate=>rate===null).length;
+      $('bidBudgetStatus').textContent=rahati
+        ? 'Rates start from Vendor Budget and can be edited.'+(missing?' '+missing+' line(s) have no single usable Vendor Budget. Check the workbook.':'')
+        : 'Enter the rates quoted by '+supplier+'.';
+    };
+    fields.supplier.onchange=()=>{
+      drafts.set(supplier,inputs.map(input=>input.value));
+      supplier=fields.supplier.value;
+      loadRates();
+    };
+    loadRates();
+  }
   if ($('vendorCard')) $('vendorCard').onclick=()=>downloadRateCard(c);
   bind('vendorReturn',v=>importRahatiBid(c,v.quotation));
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
@@ -448,7 +482,7 @@ function render() {
     c.rfq=v;
     move(c,3);
   });
-  bind('bid',v=>recordBid(c,v.supplier,v.reference,c.snags.map((s,i)=>readRate(v['rate'+i]))));
+  bind('bid',v=>recordBid(c,v.supplier,v.reference,c.snags.map((_,i)=>readRate(v['rate'+i]))));
   bind('award',v=>{
     const index=Number(v.bid), bid=c.bids[index];
     if(!quotationAllowed(c,bid))throw Error(priceGateMessage);
