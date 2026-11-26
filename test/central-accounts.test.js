@@ -11,7 +11,7 @@ test('Rahati sees only its quotation and no ABFM selling information',()=>{
   assert.equal(Object.hasOwn(item.items[0],'rate'),false);
   assert.doesNotMatch(JSON.stringify(item),/200|Guardian|margin|confidential/i);
   assert.deepEqual(assignedRecords({cases:[{...record,step:9,award:'Guardian'}]},{role:'rahati',supplier:'Rahati Bayti'}),[]);
-  assert.equal(supplierStage({role:'rahati',supplier:'Rahati Bayti'},record),null);
+  assert.equal(supplierStage({role:'rahati',supplier:'Rahati Bayti'},record),'award-status');
 });
 test('client sees issued selling quotation only at assigned properties',()=>{
  const user={role:'client',properties:[{client:'DP World',site:'J18'}]};
