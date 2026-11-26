@@ -32,7 +32,7 @@ function wireSubmit(form,handler){
   };
 }
 function quotationForm(record,c){
-  const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · Qty '+line.qty,'number',
+  const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · Target budget '+money(line.vendorBudget)+' · Qty '+line.qty,'number',
     'min="0" max="100000000" step=".01" value="'+(Number.isFinite(line.vendorBudget)?line.vendorBudget:'')+'"')).join('');
   return '<p>'+e(record.instructions||'')+'</p><form id="supplierQuote">'+field('reference','Quotation reference')+inputs+
     '<p id="supplierTarget" role="status"></p><label>Quotation format<select name="template"><option value="detailed">Detailed RFQ and rectification</option><option value="standard">Standard service quotation</option></select></label>'+
@@ -62,11 +62,43 @@ function previewSupplierQuotation(c,reference,rates,template,onReference){
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
 }
+function viewSubmittedQuotation(c,quotation){
+  const template=quotation.template==='standard'?'standard':'detailed';
+  c.rahatiQuotationDetails=quotation.details||{};
+  const dialog=document.createElement('dialog');
+  dialog.className='quotation-dialog';
+  dialog.innerHTML=rahatiQuotationDocument(c,quotation.reference,quotation.rates,template)+
+    '<button class="print" type="button">Print / Save PDF</button> <button class="excel secondary" type="button">Download Excel</button> <button class="dismiss secondary" type="button">Close</button>';
+  document.body.append(dialog);
+  dialog.querySelector('.print').onclick=()=>window.print();
+  dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,quotation.reference+'-Rahati-'+template);
+  dialog.querySelector('.dismiss').onclick=()=>dialog.close();
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+  dialog.showModal();
+}
+function viewSubmittedWcr(c,record){
+  const signed=record.supplierReport;
+  if(!signed)return;
+  const dialog=document.createElement('dialog');
+  dialog.className='inspection-dialog';
+  dialog.innerHTML='<div class="inspection-document"><h2>Rahati Bayti Work Completion Report</h2>'+
+    '<p>WCR reference: '+e(signed.reference)+' · Case: '+e(record.id)+' · Site: '+e(record.site)+'</p>'+
+    '<p class="inspection-comment"><strong>Report remarks:</strong> '+e(signed.remarks||'–')+'</p>'+
+    rows(['BOQ Ref.','Work details','Before photo','After photo','Supplier remarks'],record.items.map((line,i)=>[
+      e(line.ref),e(line.description),photo(line.before,'Before'),photo(line.after,'After'),e(signed.lines?.[i]?.work||'')
+    ]))+reinspectionSignatures(c,signed,record.verification)+'</div>'+
+    '<button class="print" type="button">Print / Save PDF</button> <button class="dismiss secondary" type="button">Close</button>';
+  document.body.append(dialog);
+  dialog.querySelector('.print').onclick=()=>window.print();
+  dialog.querySelector('.dismiss').onclick=()=>dialog.close();
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+  dialog.showModal();
+}
 function latestSupplierDraft(record,c){
   const draft=record.reportDraft||record.supplierReport;
   return {reference:draft?.reference||record.wcrReference||'',remarks:draft?.remarks||'',
     lines:record.items.map((line,i)=>({work:draft?.lines?.[i]?.work||'',after:draft?.lines?.[i]?.after||line.after||''})),
-    signature:{name:record.reportDraft?.signature?.name||'',image:record.reportDraft?.signature?.image||''}};
+    signature:{name:draft?.signature?.name||'',image:draft?.signature?.image||''}};
 }
 function reinspectionForm(record,c){
   const draft=latestSupplierDraft(record,c);
@@ -82,25 +114,43 @@ function reinspectionForm(record,c){
 }
 function renderAssigned(message){
   const list=$('supplierCases');
+  const stageNames=['Received','Inspection Assigned','Snags Confirmed','RFQ Issued','Quote Received','CS Approval','Client Submission','Client Approval','Authorized','In Progress','Reinspection','Closed'];
   list.replaceChildren();
   for(const record of supplierState.records){
     const button=document.createElement('button');
-    button.type='button';
-    button.className='secondary';
-    button.textContent=record.id+' · '+record.site;
+    button.type='button';button.className='secondary';
+    button.textContent=record.id+' · '+record.site+' · '+(stageNames[record.step]||'Case');
     button.onclick=()=>{openCase=record.id;renderAssigned('');};
     list.append(button);
   }
   const record=supplierState.records.find(row=>row.id===openCase);
   const detail=$('supplierDetail');
   const banner='<p role="status">'+e(message)+'</p><p id="supplierError" class="error" role="alert"></p>';
-  if(!record){detail.innerHTML='<article><h1>No open supplier assignments</h1>'+banner+'</article>';return;}
-  const c={id:record.id,site:record.site,award:'Rahati Bayti',snags:record.items,rfq:{instructions:record.instructions}};
-  detail.innerHTML='<article><h1>'+e(record.site)+'</h1><p>'+e(record.id)+'</p>'+banner+
+  if(!record){detail.innerHTML='<article><h1>No supplier cases available</h1>'+banner+'</article>';return;}
+  const c={id:record.id,site:record.site,client:record.client,contact:record.contact,building:record.building,
+    inspection:record.inspection,reinstatement:record.reinstatement,request:record.request,quotationReference:record.quotationReference,
+    order:record.order,started:record.started,submitted:record.submitted,award:'Rahati Bayti',snags:record.items,rfq:{instructions:record.instructions}};
+  const stageTitle=stageNames[record.step]||'Case';
+  const quotationCards=(record.quotations||[]).map((quotation,index)=>
+    '<section class="supplier-submitted-quote"><h2>Rahati quotation · '+e(quotation.reference)+(index===record.quotations.length-1&&record.quotations.length>1?' · Latest submission':'')+'</h2>'+
+    '<p>Subtotal before VAT: '+money(quotation.total)+'</p><button type="button" class="view-supplier-quote" data-quote="'+index+'">View / print quotation PDF</button></section>').join('');
+  const signedWcr=record.supplierReport?'<section><h2>Submitted signed WCR</h2><p>'+e(record.supplierReport.reference)+'</p>'+
+    '<button type="button" id="viewSupplierSignedWcr">View / print signed WCR</button></section>':'';
+  detail.innerHTML='<article><h1>'+e(record.site)+'</h1><p>'+e(record.id)+' · Current stage: <strong>'+e(stageTitle)+'</strong></p>'+banner+
+    (record.quotations?.length?quotationCards:'')+signedWcr+
     rows(['BOQ Ref.','Scope','Unit','Qty','Before photo'],record.items.map(line=>[
       e(line.ref),e(line.description),e(line.unit),line.qty,photo(line.before,'Before')
     ]))+(record.stage==='quotation'?quotationForm(record,c):record.stage==='reinspection'?reinspectionForm(record,c):
+      record.stage==='quotation-submitted'?'<p>Your quotation has been received by ABFM. It remains available above.</p>':
+      record.stage==='award-status'?'<p>Your quotation and case status are available above while ABFM processes approval and authorization.</p>':
+      record.stage==='completed'?'<p>Work is signed off. Your quotation and submitted signed WCR remain available above.</p>':
       '<p>Your report was submitted and is awaiting ABFM Engineer verification.</p>')+'</article>';
+  detail.querySelectorAll('.view-supplier-quote').forEach(button=>button.onclick=()=>{
+    const quote=record.quotations[Number(button.dataset.quote)];
+    if(quote)viewSubmittedQuotation(c,quote);
+  });
+  const viewWcr=$('viewSupplierSignedWcr');
+  if(viewWcr)viewWcr.onclick=()=>viewSubmittedWcr(c,record);
   const quote=$('supplierQuote');
   if(quote){
     const rates=()=>record.items.map((_,i)=>readRate(quote.elements['rate'+i].value));
