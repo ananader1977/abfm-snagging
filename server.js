@@ -106,17 +106,17 @@ async function stateApi(req,res,pathname,session){
     return respondJson(res,200,{revision,records});
   }
   const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
-  const operationsWrite=pathname==='/api/operations-action'&&req.method==='PUT';
   if(identity.role==='operations'){
     if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
-    if(!operationsWrite)return respondJson(res,403,{error:'Operations access is limited to editing a Rahati quotation during CS approval.'});
-  }else if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
+    return respondJson(res,403,{error:'The operations account has read-only access.'});
+  }
+  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
   if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
   if(req.method==='GET'&&pathname==='/api/export'){
     res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
     return respondJson(res,200,await storage.get());
   }
-  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':operationsWrite?'operations':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
     req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
@@ -154,27 +154,6 @@ async function stateApi(req,res,pathname,session){
     if(!result.rowCount)return respondJson(res,409,{error:'That username is assigned to another role.'});
     for(const [key,value] of sessions)if(value.username===account)sessions.delete(key);
     return respondJson(res,200,{username:account});
-  }
-  if(operationsWrite){
-    if(identity.role!=='operations')return respondJson(res,403,{error:'Only the operations account can edit a quotation.'});
-    if(!Number.isSafeInteger(payload.revision)||!Number.isInteger(payload.bidIndex)||!Array.isArray(payload.rates))return respondJson(res,400,{error:'The quotation edit is incomplete.'});
-    const {revision,state}=await storage.get();
-    if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before editing.'});
-    const record=state.cases.find(c=>c.id===payload.caseId);
-    if(!record)return respondJson(res,404,{error:'Case not found.'});
-    if(record.step!==5)return respondJson(res,403,{error:'Rahati quotations can only be edited after they are sent to CS approval.'});
-    const bid=record.bids[payload.bidIndex];
-    if(!bid||bid.supplier!=='Rahati Bayti'||record.award!=='Rahati Bayti'||record.awardedBid!==payload.bidIndex)return respondJson(res,403,{error:'Only the selected Rahati quotation can be edited during CS approval.'});
-    if(payload.rates.length!==record.snags.length||payload.rates.some(rate=>!Number.isFinite(rate)||rate<0||rate>1e8||Math.round(rate*100)/100!==rate))return respondJson(res,400,{error:'Enter a valid rate for each BOQ line.'});
-    const cents=value=>Math.round(value*100);
-    const vendorTotal=record.snags.reduce((sum,line)=>sum+cents(line.budget*line.qty),0);
-    const sellingTotal=record.snags.reduce((sum,line)=>sum+cents(line.rate*line.qty),0);
-    const lineRatesExceed=record.snags.every((line,index)=>cents(line.rate)>cents(payload.rates[index]));
-    if(!(vendorTotal>0&&BigInt(sellingTotal)*100n>=BigInt(vendorTotal)*121n)&&!lineRatesExceed)return respondJson(res,400,{error:'The edit would violate the existing quotation pricing rule.'});
-    bid.rates=payload.rates;
-    bid.total=record.snags.reduce((sum,line,index)=>sum+Math.round(line.qty*payload.rates[index]*100),0)/100;
-    record.history.unshift({event:'Operations updated Rahati quotation during CS approval',time:new Date().toISOString()});
-    return respondJson(res,200,await storage.write(revision,state,identity.username,'operations'));
   }
   if(mode==='supplier'){
     if(identity.role!=='rahati')return respondJson(res,403,{error:'Only the assigned supplier can submit this action.'});
