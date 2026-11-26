@@ -58,7 +58,10 @@ function render(){
       row.append(node('td',line.ref||''));
       row.append(node('td',line.description||''));
       row.append(node('td',String(line.qty??'')+' '+(line.unit||'')));
-      row.append(node('td',money(rate)));
+      const rateCell=node('td',money(rate));
+      const latestRevision=quotations.length>1&&bid===quotations[quotations.length-1];
+      if(latestRevision){rateCell.style.color='#13733f';rateCell.style.fontWeight='700';rateCell.title='Latest Rahati submission';}
+      row.append(rateCell);
       row.append(node('td',money(Math.round(Number(line.qty||0)*Number(rate)*100)/100)));
       body.append(row);
     });
