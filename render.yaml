@@ -19,3 +19,11 @@ services:
         fromDatabase:
           name: abfm-snagging-production
           property: connectionString
+
+databases:
+  - name: abfm-snagging-production
+    region: frankfurt
+    postgresMajorVersion: '17'
+    plan: 0.1c-256mb
+    databaseName: abfm_snagging_production
+    diskSizeGB: 15
