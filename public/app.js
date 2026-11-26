@@ -219,32 +219,40 @@ async function importBoq(file) {
   return catalog;
 }
 const validSellRate = (snag, vendorRate) => Number.isFinite(snag.rate) && Number.isFinite(vendorRate) && cents(snag.rate)>cents(vendorRate);
+function boqLines(c) {
+  return c.snags.map((snag,index)=>({snag,index})).filter(({snag})=>snag.source!=='Non-BOQ'&&!String(snag.ref||'').startsWith('NBOQ-'));
+}
 function budgetUplift(c) {
-  if (!c.snags.length || !c.snags.every(s=>Number.isFinite(s.budget) && Number.isFinite(s.rate))) return null;
-  const budget=c.snags.reduce((sum,s)=>sum+cents(amount(s.budget,s.qty)),0);
-  const selling=cents(total(c));
-  if (!Number.isSafeInteger(budget) || !Number.isSafeInteger(selling) || budget<=0) return null;
-  return {budget,selling,meets:BigInt(selling)*100n>=BigInt(budget)*121n};
+  const lines=boqLines(c);
+  if(!lines.length)return {budget:0,selling:0,meets:true,applicable:false};
+  if(!lines.every(({snag})=>Number.isFinite(snag.budget)&&Number.isFinite(snag.rate)))return null;
+  const budget=lines.reduce((sum,{snag})=>sum+cents(amount(snag.budget,snag.qty)),0);
+  const selling=lines.reduce((sum,{snag})=>sum+cents(amount(snag.rate,snag.qty)),0);
+  if(!Number.isSafeInteger(budget)||!Number.isSafeInteger(selling)||budget<=0)return null;
+  return {budget,selling,meets:BigInt(selling)*100n>=BigInt(budget)*121n,applicable:true};
 }
 function quotationAllowed(c,bid) {
-  return Boolean(bid && c.snags.length && c.snags.every(s=>Number.isFinite(s.rate)) &&
-    (budgetUplift(c)?.meets || c.snags.every((s,i)=>validSellRate(s,bid.rates[i]))));
+  const lines=boqLines(c),uplift=budgetUplift(c);
+  return Boolean(bid&&c.snags.length&&c.snags.every(s=>Number.isFinite(s.rate))&&
+    (!lines.length||(uplift?.meets??lines.every(({snag,index})=>validSellRate(snag,bid.rates[index])))));
 }
-const priceGateMessage = 'Resolve the pricing before approval. The selling subtotal must be at least 21% above Vendor Budget or each selling rate must exceed the selected vendor rate.';
+const priceGateMessage = 'For BOQ lines, the total ABFM selling price must be at least 21% above the total Vendor Budget. Non-BOQ lines are excluded from this check.';
 const changedRate = (snag, vendorRate) => Number.isFinite(snag.budget) && cents(snag.budget)!==cents(vendorRate);
 function rahatiBudgetNotice(c,rates,budgets) {
-  const ready=c.snags.length>0&&c.snags.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty)&&line.qty>0);
-  const sellingCents=ready?cents(total(c)):null;
-  if(!Number.isSafeInteger(sellingCents)||sellingCents<=0)return {text:'The overall target budget is unavailable for this quotation.',over:false};
+  const selected=boqLines(c);
+  if(!selected.length)return {text:'No BOQ items are subject to the target budget. Non-BOQ items are excluded.',over:false};
+  const ready=selected.every(({snag})=>Number.isFinite(snag.rate)&&Number.isFinite(snag.qty)&&snag.qty>0);
+  const sellingCents=ready?selected.reduce((sum,{snag})=>sum+cents(amount(snag.rate,snag.qty)),0):null;
+  if(!Number.isSafeInteger(sellingCents)||sellingCents<=0)return {text:'The overall BOQ target budget is unavailable for this quotation.',over:false};
   const target=Math.round(sellingCents*.79);
-  const targetText='Overall target budget: '+money(target/100)+' before VAT.';
+  const targetText='Overall BOQ target budget: '+money(target/100)+' before VAT. Non-BOQ items are excluded.';
   if(rates.some(rate=>rate===null))return {text:targetText+' Enter all rates to check your quotation.',over:false};
-  const quoted=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
+  const quoted=selected.reduce((sum,{snag,index})=>sum+cents(amount(rates[index],snag.qty)),0);
   const over=quoted>target;
-  const changed=budgets.every(Number.isFinite)&&quoted!==c.snags.reduce((sum,line,i)=>sum+cents(amount(budgets[i],line.qty)),0);
-  const result=over?'Your quotation exceeds the target budget. Please review the rates before submitting.':
-    changed?'Your quotation differs from the original budget and is within the overall target.':'Your quotation is within the overall target.';
-  return {text:targetText+' Your subtotal: '+money(quoted/100)+'. '+result,over};
+  const changed=selected.every(({index})=>Number.isFinite(budgets[index]))&&quoted!==selected.reduce((sum,{snag,index})=>sum+cents(amount(budgets[index],snag.qty)),0);
+  const result=over?'Your BOQ subtotal exceeds the target budget. Please review the rates before submitting.':
+    changed?'Your BOQ quotation differs from the original budget and is within the target.':'Your BOQ quotation is within the target.';
+  return {text:targetText+' Your BOQ subtotal: '+money(quoted/100)+'. '+result,over};
 }
 function vendorBudget(snag,catalog) {
   if(Number.isFinite(snag.budget))return snag.budget;
@@ -267,68 +275,84 @@ function recordBid(c, supplier, reference, rates) {
 }
 
 
-function dpwQuotationWorkbookData(c){
-  const fields=quotationFields(c,false),rows=[],styleCells={},merged=['C1:D1','C2:D2','C3:D3','C5:H5','A8:C10','A13:C14'];
-  const put=(row,col,value,style)=>{rows[row-1]??=Array(8).fill('');rows[row-1][col-1]=value;if(style)styleCells[String.fromCharCode(64+col)+row]=style;};
-  const label=(cell,text)=>{const m=cell.match(/^([A-H])(\d+)$/);put(Number(m[2]),m[1].charCodeAt(0)-64,text,3);};
-  const value=(cell,text)=>{const m=cell.match(/^([A-H])(\d+)$/);put(Number(m[2]),m[1].charCodeAt(0)-64,text||'',4);};
-  const left=(row,name,val)=>{label('A'+row,name);value('C'+row,val);};
-  const right=(row,name,val)=>{label('G'+row,name);value('H'+row,val);};
-  left(1,'Client Name:',fields.client);right(1,'Ref. No.',fields.reference);
-  left(2,'Property Name:',fields.property);right(2,'Date',fields.date.split('-').reverse().join('/'));
-  left(3,'Contact Person:',fields.contact);right(3,'Task ID.',fields.task);
-  left(4,'Works Location:',fields.location);
-  label('A5','Subject:');value('C5',fields.subject);
-  label('A7','Works Requirement:');right(7,'Quotation Validity:',fields.validity);
-  value('A8',fields.requirement);
-  label('A12','Additional Information:');right(8,'Materials Delivery Period:',fields.delivery);
-  right(9,'Works Completion Period:',fields.completion);
-  right(10,'Warranty (as applicable):',fields.warranty);
-  right(11,'Urgency of Works:',fields.urgency);right(12,'Payment Terms:',fields.payment);
-  value('A13',fields.additional);
-  const headerRow=15,headers=['SN','BOQ Ref Number','Description','Unit','Qty','Unit Price','SubTotal','Total'];
-  rows[headerRow-1]=headers;for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+headerRow]=1;
+function dpwQuotationWorkbookData(c,tenant=false){
+  const fields=quotationFields(c,tenant),count=tenant?4:8,rows=[],styleCells={};
+  const merged=tenant?['B5:D5','A8:B10','C8:D13']:['C1:D1','C2:D2','C3:D3','C5:H5','A8:C10','A13:C14'];
+  const put=(row,col,value,style)=>{
+    rows[row-1]??=Array(count).fill('');
+    rows[row-1][col-1]=value;
+    if(style)styleCells[String.fromCharCode(64+col)+row]=style;
+  };
+  const label=(row,col,text)=>put(row,col,text,3);
+  const value=(row,col,text)=>put(row,col,text||'',4);
+  if(tenant){
+    [['Client Name:',fields.client,'Ref. No.',fields.reference],
+     ['Property Name:',fields.property,'Date',fields.date.split('-').reverse().join('/')],
+     ['Works Location:',fields.location,'Task ID.',fields.task]].forEach((r,i)=>{
+      label(i+1,1,r[0]);value(i+1,2,r[1]);label(i+1,3,r[2]);value(i+1,4,r[3]);
+    });
+    label(5,1,'Subject:');value(5,2,fields.subject);
+    label(7,1,'Works Requirement:');value(8,1,fields.requirement);
+    label(11,1,'Additional Information:');value(12,1,fields.additional);
+    [['Quotation Validity:',fields.validity],['Materials Delivery Period:',fields.delivery],
+     ['Works Completion Period:',fields.completion],['Warranty (as applicable):',fields.warranty],
+     ['Urgency of Works:',fields.urgency],['Payment Terms:',fields.payment]].forEach(([name,val],i)=>{
+       label(7+i,3,name);value(7+i,4,val);
+    });
+  }else{
+    const left=(row,name,val)=>{label(row,1,name);value(row,3,val);};
+    const right=(row,name,val)=>{label(row,7,name);value(row,8,val);};
+    left(1,'Client Name:',fields.client);right(1,'Ref. No.',fields.reference);
+    left(2,'Property Name:',fields.property);right(2,'Date',fields.date.split('-').reverse().join('/'));
+    left(3,'Contact Person:',fields.contact);right(3,'Task ID.',fields.task);
+    left(4,'Works Location:',fields.location);
+    label(5,1,'Subject:');value(5,3,fields.subject);
+    label(7,1,'Works Requirement:');right(7,'Quotation Validity:',fields.validity);
+    value(8,1,fields.requirement);right(8,'Materials Delivery Period:',fields.delivery);
+    right(9,'Works Completion Period:',fields.completion);right(10,'Warranty (as applicable):',fields.warranty);
+    right(11,'Urgency of Works:',fields.urgency);right(12,'Payment Terms:',fields.payment);
+    label(12,1,'Additional Information:');value(13,1,fields.additional);
+  }
+  const headerRow=15,headers=tenant?['SN','BOQ Ref Number','Description','Total']:['SN','BOQ Ref Number','Description','Unit','Qty','Unit Price','SubTotal','Total'];
+  rows[headerRow-1]=headers;
+  for(let col=1;col<=count;col++)styleCells[String.fromCharCode(64+col)+headerRow]=1;
   c.snags.forEach((snag,index)=>{
-    const row=headerRow+index+1,subtotal=Math.round(amount(snag.rate,snag.qty)*100)/100;
-    rows[row-1]=[index+1,snag.ref,snag.description,snag.unit,snag.qty,snag.rate,subtotal,subtotal];
-    for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+row]=col===1||col===5||col>=6?2:4;
+    const lineTotal=Math.round(amount(snag.rate,snag.qty)*100)/100,row=headerRow+index+1;
+    rows[row-1]=tenant?[index+1,snag.ref,snag.description,lineTotal]:[index+1,snag.ref,snag.description,snag.unit,snag.qty,snag.rate,lineTotal,lineTotal];
+    for(let col=1;col<=count;col++)styleCells[String.fromCharCode(64+col)+row]=col===1||(!tenant&&col===5)||col>=(tenant?4:6)?2:4;
   });
-  const subtotal=total(c),vat=amount(subtotal,.05);
+  const firstTotal=headerRow+c.snags.length+1,subtotal=total(c),vat=amount(subtotal,.05);
   const totals=[['Total Value',subtotal],['Discount (if applicable)',0],['Total after Discount',subtotal],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',subtotal+vat]];
   totals.forEach(([name,number],offset)=>{
-    const row=firstTotal+offset;rows[row-1]=[name,'','','','','','',number];
-    styleCells['A'+row]=offset===4?5:3;styleCells['H'+row]=offset===4?6:2;
+    const row=firstTotal+offset;
+    rows[row-1]=tenant?[name,'','',number]:[name,'','','','','','',number];
+    styleCells['A'+row]=3;styleCells[(tenant?'D':'H')+row]=offset===4?6:2;
+    merged.push('A'+row+':'+(tenant?'C':'G')+row);
   });
-  const firstTotal=headerRow+c.snags.length+1;
-  totals.forEach((_,offset)=>merged.push('A'+(firstTotal+offset)+':G'+(firstTotal+offset)));
   const remarks=firstTotal+totals.length+1;
-  label('A'+remarks,'Remarks:');value('A'+(remarks+1),fields.remarks);
-  for(const row of [1,2,3,4,5,7,8,9,10,11,12,13,14,remarks,remarks+1]){
-    rows[row-1]??=Array(8).fill('');
-    for(let col=1;col<=8;col++){
-      const ref=String.fromCharCode(64+col)+row;
-      if(!styleCells[ref])styleCells[ref]=4;
-    }
-  }
-  for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+remarks]=3;
-  merged.push('A'+(remarks+1)+':H'+(remarks+1));
-  return {template:'dpw',lines:rows.map(row=>row||Array(8).fill('')),width:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14],merged,styleCells,pictures:[],classNames:new Set(),remarksRow:remarks};
+  label(remarks,1,'Remarks:');value(remarks+1,1,fields.remarks);
+  rows[remarks-1]??=Array(count).fill('');rows[remarks]??=Array(count).fill('');
+  for(let col=1;col<=count;col++)styleCells[String.fromCharCode(64+col)+remarks]=3;
+  merged.push('A'+(remarks+1)+':'+String.fromCharCode(64+count)+(remarks+1));
+  const signRow=remarks+3,split=tenant?2:4;
+  put(signRow,1,'Al Bonian FM Representative',3);put(signRow,split+1,'Rahati Bayti Representative',3);
+  put(signRow+1,1,'Signature: __________________    Date: __________',4);
+  put(signRow+1,split+1,'Signature: __________________    Date: __________',4);
+  merged.push('A'+signRow+':'+String.fromCharCode(64+split)+signRow,
+    String.fromCharCode(65+split)+signRow+':'+String.fromCharCode(64+count)+signRow,
+    'A'+(signRow+1)+':'+String.fromCharCode(64+split)+(signRow+1),
+    String.fromCharCode(65+split)+(signRow+1)+':'+String.fromCharCode(64+count)+(signRow+1));
+  const width=tenant?[5.5,18,53,24]:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14];
+  return {template:'dpw',lines:rows.map(row=>row||Array(count).fill('')),width,merged,styleCells,pictures:[],classNames:new Set()};
 }
 function quoteWorkbookData(sheet) {
   const heading=sheet.querySelector('h2').textContent.trim();
-  const lines=[[heading]];
-  const pictures=[];
-  const classNames=new Set();
+  const lines=[[heading]],pictures=[],classNames=new Set();
+  const rahati=sheet.classList.contains('rahati-sheet');
   const append=(values,format)=>{lines.push(values);if(format)classNames.add(lines.length);};
-  for(const node of sheet.querySelectorAll('.quote-meta dt,.quote-subject dt,.quote-terms dt')){
-    append([node.textContent.trim(),node.nextElementSibling.textContent.trim()]);
-  }
-  for(const node of sheet.querySelectorAll('.rahati-identifiers strong')){
-    append([node.textContent.trim()]);
-  }
-  for(const node of sheet.querySelectorAll('.rahati-meta > div')){
-    append(Array.from(node.children,child=>child.textContent.trim()));
-  }
+  for(const node of sheet.querySelectorAll('.quote-meta dt,.quote-subject dt,.quote-terms dt'))append([node.textContent.trim(),node.nextElementSibling.textContent.trim()]);
+  for(const node of sheet.querySelectorAll('.rahati-identifiers strong'))append([node.textContent.trim()]);
+  for(const node of sheet.querySelectorAll('.rahati-meta > div'))append(Array.from(node.children,child=>child.textContent.trim()));
   const numericColumns=/^(?:#|sn|qty|unit\s*rate|unit\s*price|subtotal|total|amount)$/i;
   for(const table of sheet.querySelectorAll('table')){
     append([]);
@@ -340,25 +364,24 @@ function quoteWorkbookData(sheet) {
         const image=cell.querySelector('img');
         if(image){
           const source=image.getAttribute('src');
-          if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source||'')){
-            pictures.push({row:lines.length,column:index,source});
-          }
+          if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source||''))pictures.push({row:lines.length,column:index,source});
           return '';
         }
-        const value=cell.innerText.trim();
-        const numeric=!header&&(totals?index===1:numericColumns.test(headers[index]||''));
-        const clean=value.replace(/^AED\s*/i,'').replace(/,/g,'');
-        return numeric&&/^\d+(?:\.\d+)?$/.test(clean)?Number(clean):value;
+        const text=cell.innerText.trim(),numeric=!header&&(totals?index===1:numericColumns.test(headers[index]||'')),clean=text.replace(/^AED\s*/i,'').replace(/,/g,'');
+        return numeric&&/^\d+(?:\.\d+)?$/.test(clean)?Number(clean):text;
       });
-      append(values,header || /^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
+      append(values,header||/^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
     }
   }
-  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks')){
-    append([node.innerText.trim()]);
+  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks,.quote-signatures'))append([node.innerText.trim()]);
+  if(rahati){
+    const logo=sheet.querySelector('.rahati-heading img')?.getAttribute('src');
+    if(/^data:image\/(?:jpeg|png);base64,/.test(logo||''))pictures.push({row:0,column:0,source:logo});
+    lines.unshift([]);
+    for(const row of classNames.values())classNames.delete(row);
   }
-  return {lines,classNames,pictures};
+  return {lines,classNames,pictures,...(rahati?{template:'rahati',width:[8,34,24,12,14,16,18,18]}:{})};
 }
-
 function quotationZip(parts) {
   const encoder=new TextEncoder();
   const chunks=[], directory=[];
@@ -487,7 +510,7 @@ function rahatiQuotationFields(c,reference,template) {
   };
 }
 function downloadQuotationExcel(dialog,filename,c,tenant) {
-  const data=c&&!tenant?dpwQuotationWorkbookData(c):quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet'));
+  const data=c?dpwQuotationWorkbookData(c,tenant):quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet'));
   downloadExcelFile(data,filename);
 }
 function quotationSummaryData(c) {
@@ -544,7 +567,9 @@ function rahatiQuotationDocument(c,reference,rates,template) {
     [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',totalCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
     '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>'+e(details.notes)+'</p></div>'+
     '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div></div>'+
-    '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div></section>';
+    '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
+    '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
+    '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div></section>';
 }
 function showRahatiQuotation(c,bidForm) {
   const formData=new FormData(bidForm);
@@ -607,12 +632,12 @@ async function importRahatiBid(c,file) {
 
 const inspectionHeaderFields=[
   ['building','Building Name',true],['location','Location',true],['date','Survey Date',true,'date'],
-  ['engineer','Inspector Name',true],['lessee','Lessee Name'],['ackDate','Acknowledgement Date',false,'date'],
+  ['task','Task ID'],['engineer','Inspector Name',true],['lessee','Lessee Name'],['ackDate','Acknowledgement Date',false,'date'],
   ['remarks','Inspection Remarks',false,'textarea']
 ];
 const inspectionItems=c=>c.snags.length?c.snags:[{location:c.site,notes:'No reinstatement work is required.'}];
 function inspectionFields(c) {
-  const fields={building:c.building||c.site,location:c.site,date:c.date||'',engineer:c.engineer||'',lessee:'',ackDate:'',remarks:''};
+  const fields={building:c.building||c.site,location:c.site,date:c.date||'',task:c.inspection||c.id,engineer:c.engineer||'',lessee:'',ackDate:'',remarks:''};
   inspectionItems(c).forEach((snag,i)=>{
     fields['location'+i]=snag.location||'';
     fields['notes'+i]=snag.notes||'';
@@ -656,7 +681,8 @@ function inspectionReport(c) {
     '<p>I, '+e(details.lessee||'________________________')+', acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p>'+
     '<p>Lessee Name &amp; Signature: '+e(details.lessee)+' ________________________________________</p>'+
     '<p>Date: '+e(ackDate||'____________________')+'</p>'+
-    '<p>Inspector Name &amp; Signature: '+e(details.engineer)+' ________________________________________</p></section>';
+    '<div class="inspection-signature-grid"><div><strong>Al Bonian FM</strong><p>'+e(details.engineer||'')+'</p><span>Signature: ____________________</span><span>Date: ______________</span></div>'+
+    '<div><strong>Rahati Bayti</strong><p>Authorized Representative</p><span>Signature: ____________________</span><span>Date: ______________</span></div></div></section>';
   return pages.map((page,index)=>{
     const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
       (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
@@ -664,7 +690,7 @@ function inspectionReport(c) {
     return '<section class="inspection-sheet"><div class="inspection-heading"><img src="'+e(logo)+'" alt="Al Bonian FM">'+
       '<h2 id="inspection-title-'+index+'">End of Lease Inspection Report</h2></div>'+
       '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(details.building)+'</div><div><strong>Location:</strong> '+e(details.location)+'</div>'+
-      '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Inspector:</strong> '+e(details.engineer)+'</div>'+
+      '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Task ID:</strong> '+e(details.task||c.inspection||c.id)+'</div><div><strong>Inspector:</strong> '+e(details.engineer)+'</div>'+
       '<div class="inspection-count">Composed of '+pages.length+(pages.length===1?' Page':' Pages')+'</div></div>'+
       '<table class="inspection-table"><colgroup><col><col><col><col></colgroup>'+
       '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th><th scope="col">Priority</th></tr></thead>'+
@@ -789,6 +815,8 @@ function quotationDocument(c,tenant) {
     '<thead><tr>'+headers.map(header=>'<th scope="col">'+header+'</th>').join('')+'</tr></thead><tbody>'+lineRows+'</tbody></table>'+
     '<table class="quote-totals"><tbody>'+totals.map(([label,number])=>'<tr><th scope="row">'+label+'</th><td>'+displayAmount(number)+'</td></tr>').join('')+'</tbody></table>'+
     '<div class="quote-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
+    '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
+    '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div>'+
     '<div class="quote-footer"><span>Document Code: ABFM-ADM-QUO-001-2022-00<br>Rev. 0</span><span>Classification: Quotation</span><span>Issue No.: 1 Date: 29 Aug. 2022</span></div></section>';
 }
 
@@ -857,24 +885,25 @@ function previewSupplierWcr(c,draft) {
   dialog.showModal();
 }
 function workCompletionReport(c){
-  const final=c.step===11,details=quotationFields(c,false),verification=c.reinspectionVerification||{},supplier=c.supplierWcr?.signature||{};
+  const final=c.step===11,details=quotationFields(c,false),verification=c.reinspectionVerification||{};
   const reportDate=verification.date?.split('-').reverse().join('/')||c.submitted||'';
-  const sign=(value,label)=>'<div class="client-wcr-sign"><strong>'+label+'</strong><div class="client-wcr-sign-line">'+(value?.image?'<img src="'+e(value.image)+'" alt="'+label+' signature">':'')+'</div><div>Name: '+e(value?.name||'')+'</div><div>Date: '+e(label.includes('Engineer')?reportDate:(c.submitted||''))+'</div></div>';
-  const work=c.snags.map((line,i)=>'<section class="client-wcr-item"><strong>'+e(line.ref||String(i+1))+'. '+e(line.description)+'</strong>'+
-    '<div class="client-wcr-photos">'+photo(line.before,'Before Photo')+photo(line.after,'After Photo')+'</div>'+
-    (c.supplierWcr?.lines?.[i]?.work?'<p>'+e(c.supplierWcr.lines[i].work)+'</p>':'')+'</section>').join('');
-  const logo=globalThis.brand?.abfm||'abfm.jpg';
-  return '<section class="client-wcr-sheet"><header class="client-wcr-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2>WORK COMPLETION REPORT</h2></header>'+
+  const sign=(value,label)=>'<div class="client-wcr-sign"><strong>'+label+'</strong><div class="client-wcr-sign-line">'+(value?.image?'<img src="'+e(value.image)+'" alt="'+label+' signature">':'')+'</div><div>Name: '+e(value?.name||'')+'</div><div>Date: '+e(reportDate)+'</div></div>';
+  const framed=(src,label)=>'<figure class="client-wcr-photo">'+(src?'<img src="'+e(src)+'" alt="'+label+'">':'<div class="client-wcr-photo-empty">No photo supplied</div>')+'<figcaption>'+label+'</figcaption></figure>';
+  const work=c.snags.map((line,i)=>'<section class="client-wcr-item"><div class="client-wcr-item-description"><strong>'+e(line.ref||String(i+1))+'. '+e(line.description)+'</strong></div>'+
+    '<div class="client-wcr-photos">'+framed(line.before,'Before photo')+framed(line.after,'After photo')+'</div>'+
+    (c.supplierWcr?.lines?.[i]?.work?'<p class="client-wcr-work"><strong>Work completed:</strong> '+e(c.supplierWcr.lines[i].work)+'</p>':'')+'</section>').join('');
+  const abfm=globalThis.brand?.abfm||'abfm.jpg',dpw=globalThis.brand?.dpworld||'';
+  return '<section class="client-wcr-sheet"><header class="client-wcr-heading"><img src="'+e(abfm)+'" alt="Al Bonian FM"><h2>WORK COMPLETION REPORT</h2><img class="client-wcr-dpw-logo" src="'+e(dpw)+'" alt="DP World"></header>'+
     '<div class="client-wcr-meta">'+
-    '<div><strong>Quotation / Contract Ref #:</strong><span>'+e(details.reference)+'</span><strong>Client:</strong><span>'+e(c.client||'')+'</span><strong>Date:</strong><span>'+e(reportDate)+'</span>'+
+    '<div><strong>Quotation / Contract Ref #:</strong><span>'+e(details.reference)+'</span><strong>Client:</strong><span>'+e(c.client||'')+'</span><strong>Task ID:</strong><span>'+e(c.inspection||c.reinstatement||c.id)+'</span><strong>Date:</strong><span>'+e(reportDate)+'</span>'+
     '<strong>Monthly Fixed Cost / Variable:</strong><span>Variable</span><strong>Status:</strong><span>'+(final?'100% Completion':'Partial / In Progress')+'</span></div>'+
     '<div><strong>Location:</strong><span>'+e((c.building?c.building+' ':'')+(c.site||''))+'</span><strong>Work Order No:</strong><span>'+e(c.order||'')+'</span>'+
     (final?'<strong>Amount per Client PO / Fixed Monthly Cost:</strong><span>'+money(total(c))+'</span>':'')+
     '<strong>Work Start Date:</strong><span>'+e(c.started||'')+'</span><strong>Work Complete Date:</strong><span>'+e(reportDate)+'</span></div></div>'+
     '<p class="client-wcr-description"><strong>Work description:</strong> '+e(c.request||details.subject)+'</p>'+
     '<h3>Work details</h3>'+work+
-    '<section class="client-wcr-approvals"><h3>Approvals</h3><div>'+sign(supplier,'Service Provider - Engineer / Manager')+
-    sign(null,'End User – JAFZA / DPW')+sign(verification.signature,'Client Representative / ABFM Engineer')+'</div></section>'+
+    '<section class="client-wcr-approvals"><h3>Approvals</h3><div>'+sign(null,'DP World Representative')+
+    sign(verification.signature,'Al Bonian FM Representative')+'</div></section>'+
     '<section class="client-wcr-remarks"><strong>Remarks</strong><p>'+e(c.supplierWcr?.remarks||verification.remarks||'')+'</p></section></section>';
 }
 function report(c,type) {
@@ -917,7 +946,7 @@ function report(c,type) {
 }
 function bidComparison(c) {
   const uplift=budgetUplift(c);
-  const summary=uplift?'<p>Vendor Budget subtotal '+money(uplift.budget/100)+' · ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% overall rule':'')+'</p>':'';
+  const summary=uplift?.applicable?'<p>BOQ Vendor Budget subtotal '+money(uplift.budget/100)+' · BOQ ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% BOQ rule':'')+'</p>':'';
   const rahati=c.bids.filter(bid=>bid.supplier==='Rahati Bayti'),latest=rahati.at(-1);
   return summary+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
         const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate),isLatest=rahati.length>1&&b===latest;
