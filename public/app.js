@@ -343,7 +343,16 @@ function dpwQuotationWorkbookData(c,tenant=false){
     'A'+(signRow+1)+':'+String.fromCharCode(64+split)+(signRow+1),
     String.fromCharCode(65+split)+(signRow+1)+':'+String.fromCharCode(64+count)+(signRow+1));
   const width=tenant?[5.5,18,53,24]:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14];
-  return {template:'dpw',lines:rows.map(row=>row||Array(count).fill('')),width,merged,styleCells,pictures:[],classNames:new Set()};
+  const logo=globalThis.brand?.abfm,pictures=[];
+  if(/^data:image\/(?:jpeg|png);base64,/.test(logo||''))pictures.push({row:0,column:0,source:logo});
+  rows.unshift(Array(count).fill(''));
+  const shiftedStyles={};
+  for(const [cell,style] of Object.entries(styleCells)){
+    const match=cell.match(/^([A-Z]+)(\d+)$/);
+    shiftedStyles[match[1]+(Number(match[2])+1)]=style;
+  }
+  const shiftedMerges=merged.map(range=>range.replace(/([A-Z]+)(\d+)/g,(_,col,row)=>col+(Number(row)+1)));
+  return {template:'dpw',lines:rows.map(row=>row||Array(count).fill('')),width,merged:shiftedMerges,styleCells:shiftedStyles,pictures,classNames:new Set()};
 }
 function quoteWorkbookData(sheet) {
   const heading=sheet.querySelector('h2').textContent.trim();
