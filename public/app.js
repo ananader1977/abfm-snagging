@@ -458,27 +458,67 @@ async function importRahatiBid(c,file) {
   recordBid(c,'Rahati Bayti',quote.reference,rates);
 }
 
+
+const inspectionHeaderFields=[
+  ['building','Building Name',true],['location','Location',true],['date','Survey Date',true,'date'],
+  ['engineer','Inspector Name',true],['lessee','Lessee Name'],['ackDate','Acknowledgement Date',false,'date'],
+  ['remarks','Inspection Remarks',false,'textarea']
+];
+const inspectionItems=c=>c.snags.length?c.snags:[{location:c.site,notes:'No reinstatement work is required.'}];
+function inspectionFields(c) {
+  const fields={building:c.building||c.site,location:c.site,date:c.date||'',engineer:c.engineer||'',lessee:'',ackDate:'',remarks:''};
+  inspectionItems(c).forEach((snag,i)=>{
+    fields['location'+i]=snag.location||'';
+    fields['notes'+i]=snag.notes||'';
+    fields['priority'+i]=snag.priority||'';
+  });
+  return {...fields,...c.inspectionDetails};
+}
+function inspectionEditor(c) {
+  const items=inspectionItems(c).flatMap((_,i)=>[
+    ['location'+i,'Item '+(i+1)+' location',true],
+    ['notes'+i,'Item '+(i+1)+' comment / concern',false,'textarea'],
+    ['priority'+i,'Item '+(i+1)+' priority']
+  ]);
+  return quotationEditor([...inspectionHeaderFields,...items],inspectionFields(c),'Edit inspection report');
+}
+function attachInspectionEditor(dialog,c) {
+  wireQuotationEditor(dialog,()=>'<div class="inspection-document">'+inspectionReport(c)+'</div>',updates=>{
+    const old=inspectionFields(c);
+    if(!Object.keys(updates).some(key=>updates[key]!==String(old[key]??'')))return '';
+    const previous=c.inspectionDetails;
+    const history=c.history.slice();
+    c.inspectionDetails=updates;
+    log(c,'Inspection report details updated');
+    try{save();}
+    catch(error){c.inspectionDetails=previous;c.history=history;throw Error('Unable to save inspection details: '+error.message);}
+    return 'Inspection report saved.';
+  },'.inspection-document');
+}
 function inspectionReport(c) {
-  const date = c.date ? c.date.split('-').reverse().join('/') : '';
+  const details=inspectionFields(c);
+  const date=details.date.split('-').reverse().join('/');
+  const ackDate=details.ackDate.split('-').reverse().join('/');
   const logo = globalThis.brand?.abfm || 'abfm.jpg';
-  const observations = c.snags.length ? c.snags : [{location:c.site, notes:'No reinstatement work is required.'}];
+  const observations=inspectionItems(c).map((snag,i)=>({...snag,location:details['location'+i],notes:details['notes'+i],priority:details['priority'+i]}));
   const pages = [];
   for (let offset = 0; offset < observations.length; offset += 2) {
     pages.push(observations.slice(offset, offset + 2));
   }
   const acknowledgement = '<section class="inspection-signatures"><h3>1. LESSEE ACKNOWLEDGEMENT &amp; SIGNATURES</h3>'+
-    '<p>I, ________________________, acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p>'+
-    '<p>Lessee Name &amp; Signature: ________________________________________</p>'+
-    '<p>Date: ____________________</p>'+
-    '<p>Inspector Name &amp; Signature: '+e(c.engineer)+' ________________________________________</p></section>';
+    (details.remarks?'<p class="inspection-comment"><strong>Remarks:</strong> '+e(details.remarks)+'</p>':'')+
+    '<p>I, '+e(details.lessee||'________________________')+', acknowledge the receipt and inspection of the facility as per the conditions outlined in this document.</p>'+
+    '<p>Lessee Name &amp; Signature: '+e(details.lessee)+' ________________________________________</p>'+
+    '<p>Date: '+e(ackDate||'____________________')+'</p>'+
+    '<p>Inspector Name &amp; Signature: '+e(details.engineer)+' ________________________________________</p></section>';
   return pages.map((page,index)=>{
     const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
       (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
       '</td><td><strong>'+e(s.location)+'</strong><div class="inspection-comment">'+[s.ref,s.description,s.notes].filter(Boolean).map(e).join('<br>')+'</div></td><td>'+e(s.priority || '')+'</td></tr>').join('');
     return '<section class="inspection-sheet"><div class="inspection-heading"><img src="'+e(logo)+'" alt="Al Bonian FM">'+
       '<h2 id="inspection-title-'+index+'">End of Lease Inspection Report</h2></div>'+
-      '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(c.building || c.site)+'</div><div><strong>Location:</strong> '+e(c.site)+'</div>'+
-      '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Inspector:</strong> '+e(c.engineer)+'</div>'+
+      '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(details.building)+'</div><div><strong>Location:</strong> '+e(details.location)+'</div>'+
+      '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Inspector:</strong> '+e(details.engineer)+'</div>'+
       '<div class="inspection-count">Composed of '+pages.length+(pages.length===1?' Page':' Pages')+'</div></div>'+
       '<table class="inspection-table"><colgroup><col><col><col><col></colgroup>'+
       '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th><th scope="col">Priority</th></tr></thead>'+
@@ -509,8 +549,8 @@ function quotationFields(c,tenant) {
     ...c.quotationDetails?.[quotationKey(tenant)]
   };
 }
-function quotationEditor(specs,fields) {
-  return '<form class="quotation-editor" hidden><h3>Edit quotation details</h3><p class="error" role="alert"></p>'+
+function quotationEditor(specs,fields,title='Edit quotation details') {
+  return '<form class="quotation-editor" hidden><h3>'+e(title)+'</h3><p class="error" role="alert"></p>'+
     specs.map(([key,label,required,type])=>{
       const field=type==='textarea'?'<textarea name="'+key+'" maxlength="2000" rows="3">'+e(fields[key])+'</textarea>'
         : '<input name="'+key+'" type="'+(type||'text')+'"'+(required?' required':'')+' maxlength="500" value="'+e(fields[key])+'">';
@@ -518,7 +558,7 @@ function quotationEditor(specs,fields) {
     }).join('')+
     '<button type="submit">Save details</button><button type="button" class="cancel-edit secondary">Cancel</button></form>';
 }
-function wireQuotationEditor(dialog,renderSheet,saveDetails) {
+function wireQuotationEditor(dialog,renderSheet,saveDetails,sheetSelector='.quote-sheet,.rahati-sheet') {
   const editor=dialog.querySelector('.quotation-editor');
   const edit=dialog.querySelector('.edit-quotation');
   const notice=dialog.querySelector('.quote-save-status');
@@ -526,7 +566,8 @@ function wireQuotationEditor(dialog,renderSheet,saveDetails) {
   const toggle=open=>{
     editor.hidden=!open;
     edit.hidden=open;
-    print.disabled=excel.disabled=open;
+    print.disabled=open;
+    if(excel)excel.disabled=open;
     if(open){
       notice.textContent='';
       editor.querySelector('input,textarea')?.focus();
@@ -540,7 +581,7 @@ function wireQuotationEditor(dialog,renderSheet,saveDetails) {
     try{
       const result=saveDetails(updates);
       if(result){
-        dialog.querySelector('.quote-sheet,.rahati-sheet').outerHTML=renderSheet();
+        dialog.querySelector(sheetSelector).outerHTML=renderSheet();
         for(const [key,value] of Object.entries(updates))editor.elements[key].defaultValue=value;
       }
       toggle(false);
@@ -622,15 +663,17 @@ function report(c,type) {
     dialog.classList.add('quotation-dialog');
     dialog.setAttribute('aria-labelledby','quote-title');
   }
-  dialog.innerHTML=(inspection ? inspectionReport(c) : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+  dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
     rows(heads,lines)+
     (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
+    (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
     (quote&&c.step<7?quotationEditor(quotationFieldSpecs.filter(([key])=>!tenant||key!=='contact'),quotationFields(c,tenant))+'<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> ':'')+
     '<button class="print">Print / Save PDF</button> '+(quote?'<button class="excel secondary" type="button">Download Excel</button> ':'')+
     '<button class="dismiss secondary">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
+  if(inspection)attachInspectionEditor(dialog,c);
   if(quote){
     dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,quotationFields(c,tenant).reference+'-'+(tenant?'Tenant':'DP-World')+'-Quotation');
     if(c.step<7)attachQuotationEditor(dialog,c,tenant);
@@ -720,7 +763,7 @@ function render() {
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
     (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':''),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
-    (c.published?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
+    (c.published||(c.step===1&&c.snags.length)?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
     (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
   if ($('snag')) {
@@ -866,3 +909,36 @@ function render() {
 }
 if(globalThis.brand?.abfm)$('abfm').src=globalThis.brand.abfm;
 render();
+
+
+const installApp=$('installApp');
+if(installApp){
+  let installPrompt;
+  const hideInstall=()=>{installApp.hidden=true;installPrompt=null;};
+  if(window.matchMedia('(display-mode: standalone)').matches||navigator.standalone)hideInstall();
+  window.addEventListener('beforeinstallprompt',event=>{
+    event.preventDefault();
+    installPrompt=event;
+  });
+  window.addEventListener('appinstalled',hideInstall);
+  installApp.onclick=async ()=>{
+    if(installPrompt){
+      const prompt=installPrompt;
+      installPrompt=null;
+      await prompt.prompt();
+      if((await prompt.userChoice).outcome==='accepted')hideInstall();
+      return;
+    }
+    const help=document.createElement('dialog');
+    help.className='install-help';
+    help.setAttribute('aria-labelledby','install-title');
+    help.innerHTML='<h2 id="install-title">Install ABFM Snagging</h2>'+
+      '<p><strong>iPhone or iPad:</strong> Open the site in Safari. Tap Share, then Add to Home Screen.</p>'+
+      '<p><strong>Android, Windows or Mac:</strong> Open the site in Chrome or Edge and choose Install app or Add to Home Screen from the browser menu.</p>'+
+      '<button type="button">Close</button>';
+    document.body.append(help);
+    help.querySelector('button').onclick=()=>help.close();
+    help.addEventListener('close',()=>help.remove(),{once:true});
+    help.showModal();
+  };
+}
