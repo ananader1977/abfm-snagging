@@ -222,19 +222,20 @@ const validSellRate = (snag, vendorRate) => Number.isFinite(snag.rate) && Number
 function boqLines(c) {
   return c.snags.map((snag,index)=>({snag,index})).filter(({snag})=>snag.source!=='Non-BOQ'&&!String(snag.ref||'').startsWith('NBOQ-'));
 }
-function budgetUplift(c) {
+function budgetUplift(c,bid) {
   const lines=boqLines(c);
   if(!lines.length)return {budget:0,selling:0,meets:true,applicable:false};
-  if(!lines.every(({snag})=>Number.isFinite(snag.budget)&&Number.isFinite(snag.rate)))return null;
-  const budget=lines.reduce((sum,{snag})=>sum+cents(amount(snag.budget,snag.qty)),0);
+  if(!bid||!Array.isArray(bid.rates)||bid.rates.length!==c.snags.length||
+    !lines.every(({snag,index})=>Number.isFinite(snag.rate)&&Number.isFinite(snag.qty)&&Number.isFinite(bid.rates[index])))return null;
+  const budget=lines.reduce((sum,{snag,index})=>sum+cents(amount(bid.rates[index],snag.qty)),0);
   const selling=lines.reduce((sum,{snag})=>sum+cents(amount(snag.rate,snag.qty)),0);
-  if(!Number.isSafeInteger(budget)||!Number.isSafeInteger(selling)||budget<=0)return null;
-  return {budget,selling,meets:BigInt(selling)*100n>=BigInt(budget)*121n,applicable:true};
+  if(!Number.isSafeInteger(budget)||!Number.isSafeInteger(selling)||selling<=0||budget<0)return null;
+  return {budget,selling,meets:budget===0||BigInt(selling)*100n>=BigInt(budget)*121n,applicable:true};
 }
 function quotationAllowed(c,bid) {
-  const lines=boqLines(c),uplift=budgetUplift(c);
-  return Boolean(bid&&c.snags.length&&c.snags.every(s=>Number.isFinite(s.rate))&&
-    (!lines.length||(uplift?.meets??lines.every(({snag,index})=>validSellRate(snag,bid.rates[index])))));
+  const lines=boqLines(c),uplift=budgetUplift(c,bid);
+  return Boolean(bid&&c.snags.length&&Array.isArray(bid.rates)&&bid.rates.length===c.snags.length&&
+    c.snags.every(s=>Number.isFinite(s.rate))&&(!lines.length||uplift?.meets));
 }
 const priceGateMessage = 'For BOQ lines, the total ABFM selling price must be at least 21% above the total Vendor Budget. Non-BOQ lines are excluded from this check.';
 const changedRate = (snag, vendorRate) => Number.isFinite(snag.budget) && cents(snag.budget)!==cents(vendorRate);
@@ -957,9 +958,9 @@ function report(c,type) {
   dialog.showModal();
 }
 function bidComparison(c) {
-  const uplift=budgetUplift(c);
-  const summary=uplift?.applicable?'<p>BOQ Vendor Budget subtotal '+money(uplift.budget/100)+' · BOQ ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% BOQ rule':'')+'</p>':'';
   const rahati=c.bids.filter(bid=>bid.supplier==='Rahati Bayti'),latest=rahati.at(-1);
+  const uplift=budgetUplift(c,latest);
+  const summary=uplift?.applicable?'<p>BOQ Rahati quotation subtotal '+money(uplift.budget/100)+' · BOQ ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% BOQ rule':'')+'</p>':'';
   return summary+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
         const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate),isLatest=rahati.length>1&&b===latest;
         const quoteRate=isLatest?'<strong class="latest-rahati-rate">'+money(rate)+'</strong>'+(changed?' <span class="error">Changed from Vendor Budget</span>':'')+' <span class="latest-rahati-label">Latest Rahati submission</span>':
