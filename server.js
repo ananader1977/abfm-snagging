@@ -9,8 +9,11 @@ const {assignedRecords,passwordDigest,verifyPassword}=require('./central-account
 const {applySupplierAction,supplierNoticeTarget}=require('./supplier-workflow');
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for centralized storage.');
 const staging=process.env.SNAGGING_STAGE==='true';
+const testSchema=process.env.SNAGGING_TEST_SCHEMA;
+if(testSchema&&(!staging||!/^snagging_test_[a-f0-9]{16}$/.test(testSchema)))throw new Error('Invalid isolated staging schema.');
+const schema=testSchema||'snagging_stage';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000,
-  ...(staging?{options:'-c search_path=snagging_stage'}:{})});
+  ...(staging?{options:'-c search_path='+schema}:{})});
 const storage=new CentralStorage(pool);
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 
@@ -218,9 +221,9 @@ const server = http.createServer((req, res) => {
   });
 });
 const host = process.env.HOST || '127.0.0.1';
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT ?? 3000);
 (async()=>{
-  if(staging)await pool.query('CREATE SCHEMA IF NOT EXISTS snagging_stage');
+  if(staging)await pool.query('CREATE SCHEMA IF NOT EXISTS '+schema);
   await storage.initialize();
 })().then(()=>{
   server.listen(port,host,()=>console.log('ABFM Snagging server listening on port '+server.address().port));
