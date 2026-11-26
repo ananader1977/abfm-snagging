@@ -300,11 +300,20 @@ function dpwQuotationWorkbookData(c){
     const row=firstTotal+offset;rows[row-1]=[name,'','','','','','',number];
     styleCells['A'+row]=offset===4?5:3;styleCells['H'+row]=offset===4?6:2;
   });
+  const firstTotal=headerRow+c.snags.length+1;
+  totals.forEach((_,offset)=>merged.push('A'+(firstTotal+offset)+':G'+(firstTotal+offset)));
   const remarks=firstTotal+totals.length+1;
   label('A'+remarks,'Remarks:');value('A'+(remarks+1),fields.remarks);
-  for(let col=1;col<=8;col++){styleCells[String.fromCharCode(64+col)+remarks]=3;styleCells[String.fromCharCode(64+col)+(remarks+1)]=4;}
+  for(const row of [1,2,3,4,5,7,8,9,10,11,12,13,14,remarks,remarks+1]){
+    rows[row-1]??=Array(8).fill('');
+    for(let col=1;col<=8;col++){
+      const ref=String.fromCharCode(64+col)+row;
+      if(!styleCells[ref])styleCells[ref]=4;
+    }
+  }
+  for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+remarks]=3;
   merged.push('A'+(remarks+1)+':H'+(remarks+1));
-  return {template:'dpw',lines:rows.map(row=>row||Array(8).fill('')),width:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14],merged,styleCells,remarksRow:remarks};
+  return {template:'dpw',lines:rows.map(row=>row||Array(8).fill('')),width:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14],merged,styleCells,pictures:[],classNames:new Set(),remarksRow:remarks};
 }
 function quoteWorkbookData(sheet) {
   const heading=sheet.querySelector('h2').textContent.trim();
