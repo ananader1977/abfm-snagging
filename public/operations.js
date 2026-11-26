@@ -67,6 +67,27 @@ function render(){
     });
     table.append(body);section.append(table);article.append(section);
   }
+  if(record.step===5&&quotations.length){
+    const reject=node('button','Reject quotation · request Rahati resubmission','secondary');
+    reject.type='button';
+    reject.addEventListener('click',async()=>{
+      const reason=window.prompt('Enter the reason for requesting a revised Rahati quotation:');
+      if(!reason||!reason.trim())return;
+      reject.disabled=true;
+      try{
+        const response=await fetch('/api/operations-action',{method:'PUT',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({action:'reject-quotation',caseId:record.id,reason:reason.trim(),revision})});
+        const body=await response.json().catch(()=>null);
+        if(!response.ok)throw Error(body?.error||'The server did not confirm the request.');
+        await load();
+        $('syncStatus').textContent='Quotation returned to Rahati for resubmission.';
+      }catch(error){
+        $('syncStatus').textContent=error.message;
+        reject.disabled=false;
+      }
+    });
+    article.append(reject);
+  }
   detail.append(article);
 }
 async function load(){
