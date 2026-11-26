@@ -114,6 +114,18 @@ async function importBoq(file) {
   return catalog.length;
 }
 const validSellRate = (snag, vendorRate) => Number.isFinite(snag.rate) && Number.isFinite(vendorRate) && cents(snag.rate)>cents(vendorRate);
+function budgetUplift(c) {
+  if (!c.snags.length || !c.snags.every(s=>Number.isFinite(s.budget) && Number.isFinite(s.rate))) return null;
+  const budget=c.snags.reduce((sum,s)=>sum+cents(amount(s.budget,s.qty)),0);
+  const selling=cents(total(c));
+  if (!Number.isSafeInteger(budget) || !Number.isSafeInteger(selling) || budget<=0) return null;
+  return {budget,selling,meets:BigInt(selling)*100n>=BigInt(budget)*121n};
+}
+function quotationAllowed(c,bid) {
+  return Boolean(bid && c.snags.length && c.snags.every(s=>Number.isFinite(s.rate)) &&
+    (budgetUplift(c)?.meets || c.snags.every((s,i)=>validSellRate(s,bid.rates[i]))));
+}
+const priceGateMessage = 'Resolve the pricing before approval. The selling subtotal must be at least 21% above Vendor Budget or each selling rate must exceed the selected vendor rate.';
 const changedRate = (snag, vendorRate) => Number.isFinite(snag.budget) && cents(snag.budget)!==cents(vendorRate);
 const lineKey = (s,i) => i+':'+s.ref;
 function recordBid(c, supplier, reference, rates) {
@@ -181,31 +193,63 @@ function inspectionReport(c) {
       '<tbody>'+observationRows+'</tbody></table>'+(index===pages.length-1?acknowledgement:'')+'</section>';
   }).join('');
 }
+
+function quotationDocument(c,tenant) {
+  const today=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai'}).format(new Date());
+  const title=tenant?'DPW -TENANT -PROPOSAL':'DPW-EOL-PROPOSAL';
+  const logo=globalThis.brand?.abfm || 'abfm.jpg';
+  const displayAmount=value=>new Intl.NumberFormat('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value);
+  const value=total(c);
+  const vat=amount(value,.05);
+  const row=(label,data)=>'<dt>'+label+'</dt><dd>'+e(data || '–')+'</dd>';
+  const headers=tenant?['SN','BOQ Ref Number','Description','Total']:['SN','BOQ Ref Number','Description','Unit','Qty','Unit Price','SubTotal','Total'];
+  const lineRows=c.snags.map((s,i)=>{
+    const lineTotal=displayAmount(amount(s.rate,s.qty));
+    const cells=[i+1,s.ref,s.description];
+    if (!tenant) cells.push(s.unit,s.qty,displayAmount(s.rate),lineTotal);
+    cells.push(lineTotal);
+    return '<tr>'+cells.map(cell=>'<td>'+e(cell)+'</td>').join('')+'</tr>';
+  }).join('');
+  const totals=[['Total Value',value],['Discount (if applicable)',0],['Total after Discount',value],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',value+vat]];
+  return '<section class="quote-sheet '+(tenant?'quote-tenant':'quote-client')+'">'+
+    '<div class="quote-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2 id="quote-title">'+title+'</h2></div>'+
+    '<div class="quote-meta"><dl>'+row('Client Name:',c.client)+row('Property Name:',c.building||c.site)+
+    (tenant?'':row('Contact Person:',c.contact))+row('Works Location:',c.site)+'</dl>'+
+    '<dl>'+row('Ref. No.',tenant?c.id+'-Tenant':c.id)+row('Date',today)+row('Task ID.',c.inspection||c.reinstatement||c.id)+'</dl></div>'+
+    '<dl class="quote-subject">'+row('Subject:','EOL Reinstatement Works – '+c.site)+'</dl>'+
+    '<div class="quote-terms"><dl>'+row('Works Requirement:','End of lease reinstatement')+row('Additional Information:','')+'</dl>'+
+    '<dl>'+row('Quotation Validity:','30 Days')+row('Materials Delivery Period:','')+
+    row('Works Completion Period:',(c.days||duration(value))?(c.days||duration(value))+' days from order confirmation':'To be agreed')+
+    row('Warranty (as applicable):','')+row('Urgency of Works:',c.priority)+row('Payment Terms:','As per agreement')+'</dl></div>'+
+    '<table class="quote-lines"><colgroup>'+headers.map(()=>'<col>').join('')+'</colgroup>'+
+    '<thead><tr>'+headers.map(header=>'<th scope="col">'+header+'</th>').join('')+'</tr></thead><tbody>'+lineRows+'</tbody></table>'+
+    '<table class="quote-totals"><tbody>'+totals.map(([label,number])=>'<tr><th scope="row">'+label+'</th><td>'+displayAmount(number)+'</td></tr>').join('')+'</tbody></table>'+
+    '<div class="quote-remarks"><strong>Remarks:</strong></div>'+
+    '<div class="quote-footer"><span>Document Code: ABFM-ADM-QUO-001-2022-00<br>Rev. 0</span><span>Classification: Quotation</span><span>Issue No.: 1 Date: 29 Aug. 2022</span></div></section>';
+}
 function report(c,type) {
   const inspection = type === 'Inspection report';
   const tenant=type==='Tenant quotation';
   const quote=tenant||type==='DP World quotation';
   const wcr=type.includes('WCR');
-  if (quote && !c.snags.every((s,i)=>validSellRate(s,c.bids[c.awardedBid]?.rates[i]))) {
-    $('error').textContent='Client quotation blocked: every ABFM selling rate must exceed the selected vendor rate.';
+  if (quote && !quotationAllowed(c,c.bids[c.awardedBid])) {
+    $('error').textContent=priceGateMessage;
     return;
   }
-  const heads=wcr?['No.','Work details','Before photo','After photo','Verified status']:tenant?['SN','Before photo','BOQ ref.','Description','Total']:quote?['SN','Before photo','BOQ ref.','Description','Unit','Qty','Unit price','Subtotal']:['No.','Plot / location','Observation','Before photo'];
-  const lines=c.snags.map((s,i)=>{
-    const n=i+1, d=e(s.description), before=photo(s.before,'Before');
-    if(wcr)return [n,d,before,photo(s.after,'After'),e(s.result||'Pending Engineer verification')];
-    if(tenant)return [n,before,e(s.ref),d,money(amount(s.rate,s.qty))];
-    if(quote)return [n,before,e(s.ref),d,e(s.unit),s.qty,money(s.rate),money(amount(s.rate,s.qty))];
-    return [n,e(s.location),d,before];
-  });
+  const heads=['No.','Work details','Before photo','After photo','Verified status'];
+  const lines=wcr?c.snags.map((s,i)=>[i+1,e(s.description),photo(s.before,'Before'),photo(s.after,'After'),e(s.result||'Pending Engineer verification')]):[];
   const dialog=document.createElement('dialog');
   if (inspection) {
     dialog.classList.add('inspection-dialog');
     dialog.setAttribute('aria-labelledby','inspection-title-0');
   }
-  dialog.innerHTML=(inspection ? inspectionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+  if (quote) {
+    dialog.classList.add('quotation-dialog');
+    dialog.setAttribute('aria-labelledby','quote-title');
+  }
+  dialog.innerHTML=(inspection ? inspectionReport(c) : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
-    rows(heads,lines)+(quote?'<p>Total value '+money(total(c))+'<br>5% VAT '+money(amount(total(c),.05))+'<br>Grand total '+money(total(c)+amount(total(c),.05))+'</p>':'')+
+    rows(heads,lines)+
     (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
     '<button class="print">Print / Save PDF</button> <button class="dismiss secondary">Close</button>';
   document.body.append(dialog);
@@ -215,11 +259,13 @@ function report(c,type) {
   dialog.showModal();
 }
 function bidComparison(c) {
-  return rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
+  const uplift=budgetUplift(c);
+  const summary=uplift?'<p>Vendor Budget subtotal '+money(uplift.budget/100)+' · ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% overall rule':'')+'</p>':'';
+  return summary+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
         const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate);
         return [e(b.supplier+' / '+b.reference),e(s.ref),Number.isFinite(s.budget)?money(s.budget):'Review',
           changed?'<strong class="error">'+money(rate)+' · Changed</strong>':money(rate),Number.isFinite(s.rate)?money(s.rate):'Review',
-          validSellRate(s,rate)?'Pass':'<strong class="error">Selling price must exceed quoted rate</strong>'];
+          validSellRate(s,rate)?'Pass':'<strong class="error">Selling rate at or below quoted rate</strong>'];
       })));
 }
 function render() {
@@ -272,7 +318,7 @@ function render() {
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
     (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
-    (c.published?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation')+' '+button('tenantQuote','Tenant quotation')+' ':'')+
+    (c.published?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
     (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
   if ($('snag')) {
@@ -301,7 +347,7 @@ function render() {
   bind('bid',v=>recordBid(c,v.supplier,v.reference,c.snags.map((s,i)=>readRate(v['rate'+i]))));
   bind('award',v=>{
     const index=Number(v.bid), bid=c.bids[index];
-    if(!bid||!c.snags.every((s,i)=>validSellRate(s,bid.rates[i])))throw Error('Resolve the quoted rates before approval. Every ABFM selling rate must exceed the vendor rate.');
+    if(!quotationAllowed(c,bid))throw Error(priceGateMessage);
     c.award=bid.supplier;
     c.awardedBid=index;
     log(c,'Award recommendation · '+v.reason);
