@@ -1124,6 +1124,22 @@ if(vendorAccountForm)vendorAccountForm.onsubmit=async event=>{
   }catch(error){status.textContent=error.message;}
   finally{button.disabled=false;}
 };
+const operationsAccountForm=$('operationsAccountForm');
+if(operationsAccountForm)operationsAccountForm.onsubmit=async event=>{
+  event.preventDefault();
+  const status=$('operationsAccountStatus');
+  const button=operationsAccountForm.querySelector('button');
+  button.disabled=true;
+  try{
+    const result=await fetch('/api/operations-account',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:operationsAccountForm.elements.newPassword.value})});
+    const body=await result.json();
+    if(!result.ok)throw Error(body.error);
+    operationsAccountForm.reset();
+    status.textContent='Account ready. Username: '+body.username+'. Share the password securely with Operations.';
+  }catch(error){status.textContent=error.message;}
+  finally{button.disabled=false;}
+};
 const installApp=$('installApp');
 if(installApp){
   let installPrompt;
