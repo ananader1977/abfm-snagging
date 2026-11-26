@@ -5,6 +5,7 @@ const path = require('node:path');
 const appIcons = require('./pwa-icons');
 const {Pool}=require('pg');
 const {CentralStorage,StorageError}=require('./central-storage');
+const {assignedRecords,verifyPassword}=require('./central-accounts');
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for centralized storage.');
 const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000});
 const storage=new CentralStorage(pool);
@@ -21,7 +22,7 @@ const expectedPassword = hash(password);
 const sessions = new Map();
 const sessionSeconds = 8 * 60 * 60;
 const cleanup = setInterval(() => {
-  for (const [token, expiry] of sessions) if (expiry <= Date.now()) sessions.delete(token);
+  for (const [token, session] of sessions) if (session.expiry <= Date.now()) sessions.delete(token);
 }, 60_000);
 cleanup.unref();
 
@@ -52,9 +53,17 @@ async function login(req, res) {
   const form = new URLSearchParams(Buffer.concat(chunks).toString());
   const userMatches = timingSafeEqual(hash(form.get('username') || ''), expectedUser);
   const passwordMatches = timingSafeEqual(hash(form.get('password') || ''), expectedPassword);
-  if (!userMatches || !passwordMatches) return signIn(res, true);
+  let identity;
+  if(userMatches){
+    if(!passwordMatches)return signIn(res,true);
+    identity={username,role:'abfm',legacy:true};
+  }else{
+    const {rows:[account]}=await pool.query('SELECT username,role,password_digest FROM snagging_user WHERE username=$1 AND enabled',[form.get('username')]);
+    if(!account||!await verifyPassword(form.get('password')||'',account.password_digest))return signIn(res,true);
+    identity={username:account.username,role:account.role,legacy:false};
+  }
   const token = randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + sessionSeconds * 1000);
+  sessions.set(token,{...identity,expiry:Date.now()+sessionSeconds*1000});
   res.writeHead(303, {Location:'/', 'Set-Cookie':sessionCookie(req, token, sessionSeconds)});
   res.end();
 }
@@ -70,9 +79,25 @@ function respondJson(res,status,data){
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
   res.end(JSON.stringify(data));
 }
-async function stateApi(req,res,pathname,signedIn){
-  if(!signedIn)return respondJson(res,401,{error:'Sign in again to access saved records.'});
+async function stateApi(req,res,pathname,session){
+  if(!session)return respondJson(res,401,{error:'Sign in again to access saved records.'});
+  let identity=session;
+  if(!session.legacy){
+    const {rows:[account]}=await pool.query('SELECT username,role,supplier,properties FROM snagging_user WHERE username=$1 AND enabled',[session.username]);
+    if(!account)return respondJson(res,403,{error:'This account is disabled.'});
+    identity=account;
+  }
+  if(req.method==='GET'&&pathname==='/api/assigned'){
+    if(identity.role==='abfm')return respondJson(res,403,{error:'Use the ABFM case workspace.'});
+    const {state}=await storage.get();
+    return respondJson(res,200,{records:assignedRecords(state,identity)});
+  }
+  if(identity.role!=='abfm')return respondJson(res,403,{error:'This operation requires an ABFM account.'});
   if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
+  if(req.method==='GET'&&pathname==='/api/export'){
+    res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
+    return respondJson(res,200,await storage.get());
+  }
   const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
@@ -90,16 +115,17 @@ async function stateApi(req,res,pathname,signedIn){
   try{payload=JSON.parse(Buffer.concat(chunks).toString());}
   catch{return respondJson(res,400,{error:'Invalid save payload.'});}
   if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
-  return respondJson(res,200,await storage.write(payload.revision,payload.state,username,mode));
+  return respondJson(res,200,await storage.write(payload.revision,payload.state,identity.username,mode));
 }
 const server = http.createServer((req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   const pathname = req.url.split('?')[0];
   const token = /(?:^|;\s*)snagging_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
-  const signedIn = (sessions.get(token) || 0) > Date.now();
+  const storedSession=sessions.get(token);
+  const session=storedSession?.expiry>Date.now()?storedSession:null;
   if(pathname.startsWith('/api/')){
-    return stateApi(req,res,pathname,signedIn).catch(error=>{
+    return stateApi(req,res,pathname,session).catch(error=>{
       if(error instanceof StorageError)return respondJson(res,error.status,{error:error.message});
       console.error('Central storage operation failed',error.code||error.name);
       return respondJson(res,503,{error:'The server could not save or load the records. Your change was not confirmed. Please retry.'});
@@ -125,9 +151,13 @@ const server = http.createServer((req, res) => {
     res.writeHead(200,{'Content-Type':'image/png'});
     return res.end(req.method==='HEAD'?undefined:icon);
   }
-  if (!signedIn && pathname !== '/style.css' && pathname !== '/app.webmanifest') {
+  if (!session && pathname !== '/style.css' && pathname !== '/app.webmanifest') {
     res.writeHead(303, {Location:'/login'});
     return res.end();
+  }
+  if(session&&session.role!=='abfm'&&!['/style.css','/app.webmanifest'].includes(pathname)){
+    res.writeHead(403);
+    return res.end('The ABFM operator interface is restricted to ABFM accounts.');
   }
   const asset = routes.get(pathname);
   if (!asset) {
