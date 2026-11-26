@@ -32,3 +32,39 @@
 
 .sign-in{display:block;width:min(420px,94%);margin:60px auto}.logout{margin:0}.logout button{white-space:nowrap}.sign-in input{box-sizing:border-box}
 @media(max-width:520px){header{flex-wrap:wrap}header .demo{order:1;flex-basis:100%;max-width:none;margin:0}.logout{margin-left:auto}}
+
+/* Printable DP World and tenant quotation forms */
+.quotation-dialog{width:min(920px,96vw);max-height:92vh}
+.quote-sheet{font:13px Arial,sans-serif;color:#111;line-height:1.35;margin-bottom:18px}
+.quote-heading{display:flex;align-items:center;gap:18px;border-bottom:2px solid #323442;padding-bottom:7px;margin-bottom:12px}
+.quote-heading img{width:66px;height:48px;object-fit:contain}
+.quote-heading h2{font-size:18px;margin:0}
+.quote-meta,.quote-terms{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.quote-sheet dl{display:grid;grid-template-columns:max-content 1fr;align-content:start;gap:4px 8px;margin:0;padding:7px;border:1px solid #333;overflow-wrap:anywhere}
+.quote-sheet dt{font-weight:bold}
+.quote-sheet dd{margin:0}
+.quote-subject{margin:5px 0!important}
+.quote-sheet table{table-layout:fixed;color:#111;margin:10px 0;border:1px solid #333}
+.quote-sheet :is(td,th){border:1px solid #333;padding:4px 5px;vertical-align:middle;overflow-wrap:anywhere}
+.quote-lines th{color:#fff;background:#252630;text-align:center}
+.quote-lines td{text-align:center}
+.quote-lines td:nth-child(3){text-align:left;white-space:pre-wrap}
+.quote-lines col:first-child{width:6%}
+.quote-lines col:nth-child(2){width:15%}
+.quote-client .quote-lines col:nth-child(3){width:38%}
+.quote-client .quote-lines col:nth-child(4),.quote-client .quote-lines col:nth-child(5){width:6%}
+.quote-tenant .quote-lines col:last-child{width:17%}
+.quote-sheet .quote-totals{width:min(370px,100%);margin:0 0 8px auto}
+.quote-totals td{text-align:right;width:29%}
+.quote-totals tr:last-child{font-weight:bold;background:#ebedf1}
+.quote-remarks{min-height:38px;border:1px solid #333;padding:6px}
+@page quotation{size:A4 portrait;margin:12mm}
+@media(max-width:550px){.quotation-dialog .quote-meta,.quotation-dialog .quote-terms{grid-template-columns:1fr}.quote-sheet{font-size:11px}.quote-lines :is(td,th){padding:3px}}
+@media print{
+  dialog.quotation-dialog[open]{page:quotation;max-height:none;overflow:visible;margin:0;padding:0}
+  .quote-sheet{font-size:10pt;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .quote-sheet thead{display:table-header-group}
+  .quote-sheet tr,.quote-sheet dl,.quote-sheet .quote-totals,.quote-remarks{break-inside:avoid}
+}
+
+.quote-heading{display:grid;grid-template-columns:66px 1fr 66px;border-bottom:0}.quote-heading h2{text-align:center;text-decoration:underline;font-family:Tahoma,Arial,sans-serif}.quote-footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;font:9px Tahoma,Arial,sans-serif;margin-top:10px;break-inside:avoid}
