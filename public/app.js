@@ -59,18 +59,21 @@ async function startOnline(){
   let local=null;
   try{local=deviceRecords();}
   catch{status.textContent='This browser has local data that could not be read. Keep it intact for recovery.';}
-  if(local?.cases.length||local?.catalog?.length){
-    migrate.hidden=false;
-    migrate.onclick=async ()=>{
-      migrate.disabled=true;
-      try{
-        await refreshState();
-        await save('/api/migration',local);
-        status.textContent='Migration verified against the server response. The browser copy was preserved.';
-      }catch(error){status.textContent=error.message;}
-      finally{migrate.disabled=false;}
-    };
-  }
+  migrate.hidden=false;
+  migrate.onclick=async ()=>{
+    migrate.disabled=true;
+    try{
+      if(!local)throw Error('This browser could not read its stored records. Keep the original browser profile and its site data intact.');
+      if(!local.cases.length&&!local.catalog?.length){
+        status.textContent='No older records were found in this browser. Open this page on the desktop browser that contains the original records.';
+        return;
+      }
+      await refreshState();
+      await save('/api/migration',local);
+      status.textContent='Migration verified against the server response. The browser copy was preserved.';
+    }catch(error){status.textContent=error.message;}
+    finally{migrate.disabled=false;}
+  };
   refresh.onclick=async ()=>{
     try{await refreshState();}
     catch(error){status.textContent=error.message;}
