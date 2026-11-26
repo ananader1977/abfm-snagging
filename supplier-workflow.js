@@ -5,8 +5,9 @@ const {supplierStage}=require('./central-accounts');
 const inputText=(value,length=1000)=>typeof value==='string'?value.trim().slice(0,length):'';
 const cents=value=>Math.round(value*100);
 function supplierNoticeTarget(caseRecord) {
-  const centsTotal=caseRecord.snags.reduce((sum,line)=>sum+cents(line.rate*line.qty),0);
-  if(!caseRecord.snags.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty))||
+  const lines=caseRecord.snags.filter(line=>line.source!=='Non-BOQ'&&!String(line.ref||'').startsWith('NBOQ-'));
+  const centsTotal=lines.reduce((sum,line)=>sum+cents(line.rate*line.qty),0);
+  if(!lines.length||!lines.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty))||
     !Number.isSafeInteger(centsTotal)||centsTotal<=0)return null;
   return Math.round(centsTotal*0.79)/100;
 }
