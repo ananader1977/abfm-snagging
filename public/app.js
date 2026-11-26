@@ -236,7 +236,7 @@ function rahatiBudgetNotice(c,rates,budgets) {
   const ready=c.snags.length>0&&c.snags.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty)&&line.qty>0);
   const sellingCents=ready?cents(total(c)):null;
   if(!Number.isSafeInteger(sellingCents)||sellingCents<=0)return {text:'The overall target budget is unavailable for this quotation.',over:false};
-  const target=Number(BigInt(sellingCents)*100n/121n);
+  const target=Math.round(sellingCents*.79);
   const targetText='Overall target budget: '+money(target/100)+' before VAT.';
   if(rates.some(rate=>rate===null))return {text:targetText+' Enter all rates to check your quotation.',over:false};
   const quoted=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
@@ -844,10 +844,13 @@ function report(c,type) {
 function bidComparison(c) {
   const uplift=budgetUplift(c);
   const summary=uplift?'<p>Vendor Budget subtotal '+money(uplift.budget/100)+' · ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% overall rule':'')+'</p>':'';
+  const rahati=c.bids.filter(bid=>bid.supplier==='Rahati Bayti'),latest=rahati.at(-1);
   return summary+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
-        const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate);
+        const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate),isLatest=rahati.length>1&&b===latest;
+        const quoteRate=isLatest?'<strong class="latest-rahati-rate">'+money(rate)+'</strong>'+(changed?' <span class="error">Changed from Vendor Budget</span>':'')+' <span class="latest-rahati-label">Latest Rahati submission</span>':
+          changed?'<strong class="error">'+money(rate)+' · Changed</strong>':money(rate);
         return [e(b.supplier+' / '+b.reference),e(s.ref),Number.isFinite(s.budget)?money(s.budget):'Review',
-          changed?'<strong class="error">'+money(rate)+' · Changed</strong>':money(rate),Number.isFinite(s.rate)?money(s.rate):'Review',
+          quoteRate,Number.isFinite(s.rate)?money(s.rate):'Review',
           validSellRate(s,rate)?'Pass':'<strong class="error">Selling rate at or below quoted rate</strong>'];
       })));
 }
@@ -896,9 +899,14 @@ function render() {
   }
   let panel='';
   if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('date','Inspection date','date'),'Assign inspection');
-  if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
+  if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+select('scopeType','Line item type',['BOQ item','Non-BOQ item'])+
+    '<div id="boqScopeFields">'+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
     '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
-    field('ref','ABFM BOQ reference','text','readonly')+'<div id="ratePreview" class="meta"></div>'+field('unit','Unit of measure')+field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
+    field('ref','ABFM BOQ reference','text','readonly')+'<div id="ratePreview" class="meta"></div>'+field('unit','Unit of measure')+'</div>'+
+    '<div id="nonBoqFields" hidden>'+field('customDescription','Non-BOQ work description')+field('customUnit','Unit of measure')+
+    field('customRate','ABFM BOQ Price (AED)','number','min="0.01" max="100000000" step=".01"')+
+    '<p class="meta">Rahati target budget is calculated as 21% below the ABFM BOQ Price.</p></div>'+
+    field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
   if(c.step===3||c.step===4){
     panel='<div class="supplier"><img id="rahati" src="'+(globalThis.brand?.rahati||'rahati.png')+'" alt="Rahati Bayti">Guardian</div>'+
@@ -973,7 +981,17 @@ function render() {
         resultList.firstElementChild?.focus();
       }
     });
-    showMatches();
+    const boqGroup=$('boqScopeFields'),customGroup=$('nonBoqFields');
+    const setScopeType=()=>{
+      const custom=fields.scopeType.value==='Non-BOQ item';
+      boqGroup.hidden=custom;customGroup.hidden=!custom;
+      for(const control of boqGroup.querySelectorAll('input,select,textarea'))control.disabled=custom;
+      for(const control of customGroup.querySelectorAll('input,select,textarea'))control.disabled=!custom;
+      if(custom){applyScope(null);resultList.replaceChildren();status.textContent='Enter the non-BOQ scope and ABFM selling rate.';}
+      else showMatches();
+    };
+    fields.scopeType.addEventListener('change',setScopeType);
+    setScopeType();
   }
   if ($('bid')) {
     const fields=$('bid').elements;
@@ -1019,18 +1037,35 @@ function render() {
   bind('vendorReturn',v=>importRahatiBid(c,v.quotation));
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
   bind('snag',async v=>{
-    const line=catalog.find(x=>x.ref===v.scopeMatch);
-    if(!line)throw Error('Select a matching scope from the search results.');
-    const unit=line.unit||v.unit.trim();
-    if(!unit)throw Error('Enter the unit of measure for this BOQ scope.');
     if(!Number.isFinite(Number(v.qty))||Number(v.qty)<=0)throw Error('Enter a measured quantity greater than zero.');
-    c.snags.push({...line,unit,location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
-    log(c,'Engineer confirmed '+line.ref);
+    let item;
+    if(v.scopeType==='Non-BOQ item'){
+      const description=String(v.customDescription||'').trim(),unit=String(v.customUnit||'').trim(),rate=readRate(v.customRate);
+      if(!description)throw Error('Enter the non-BOQ work description.');
+      if(!unit)throw Error('Enter the unit of measure for this non-BOQ item.');
+      if(!Number.isFinite(rate)||rate<=0)throw Error('Enter a valid ABFM selling rate for this non-BOQ item.');
+      const number=c.snags.filter(s=>s.source==='Non-BOQ').length+1;
+      item={ref:'NBOQ-'+String(number).padStart(3,'0'),source:'Non-BOQ',description,unit,
+        rate,budget:Math.round(rate*.79*100)/100};
+    }else{
+      const line=catalog.find(x=>x.ref===v.scopeMatch);
+      if(!line)throw Error('Select a matching BOQ scope from the search results.');
+      const unit=line.unit||v.unit.trim();
+      if(!unit)throw Error('Enter the unit of measure for this BOQ scope.');
+      item={...line,source:line.source||'BOQ',unit};
+    }
+    Object.assign(item,{location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
+    c.snags.push(item);
+    log(c,'Engineer confirmed '+item.ref+(item.source==='Non-BOQ'?' · Non-BOQ item':''));
   });
   bind('confirm',()=>{c.published=true;move(c,2);});
   bind('no-work',()=>{c.published=true;c.noWork=true;log(c,'No reinstatement required');move(c,11);});
   bind('rfq',v=>{
     for(const snag of c.snags){
+      if(snag.source==='Non-BOQ'){
+        if(!Number.isFinite(snag.budget)||!Number.isFinite(snag.rate))throw Error(snag.ref+' needs a valid ABFM selling price before RFQ.');
+        continue;
+      }
       if(Number.isFinite(snag.budget)&&Number.isFinite(snag.rate))continue;
       const line=catalog.find(item=>item.ref===snag.ref);
       if(!Number.isFinite(snag.budget))snag.budget=line?.budget??null;
