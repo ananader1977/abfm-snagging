@@ -1155,3 +1155,6 @@ if(installApp){
     help.showModal();
   };
 }
+
+// Load the shared server state before enabling BOQ or other save actions.
+startOnline();
