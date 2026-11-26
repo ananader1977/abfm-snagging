@@ -802,6 +802,28 @@ function previewSupplierWcr(c,draft) {
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
 }
+function workCompletionReport(c){
+  const final=c.step===11,details=quotationFields(c,false),verification=c.reinspectionVerification||{},supplier=c.supplierWcr?.signature||{};
+  const reportDate=verification.date?.split('-').reverse().join('/')||c.submitted||'';
+  const sign=(value,label)=>'<div class="client-wcr-sign"><strong>'+label+'</strong><div class="client-wcr-sign-line">'+(value?.image?'<img src="'+e(value.image)+'" alt="'+label+' signature">':'')+'</div><div>Name: '+e(value?.name||'')+'</div><div>Date: '+e(label.includes('Engineer')?reportDate:(c.submitted||''))+'</div></div>';
+  const work=c.snags.map((line,i)=>'<section class="client-wcr-item"><strong>'+e(line.ref||String(i+1))+'. '+e(line.description)+'</strong>'+
+    '<div class="client-wcr-photos"><figure>'+photo(line.before,'Before Photo')+'<figcaption>Before Photo</figcaption></figure>'+
+    '<figure>'+photo(line.after,'After Photo')+'<figcaption>After Photo</figcaption></figure></div>'+
+    (c.supplierWcr?.lines?.[i]?.work?'<p>'+e(c.supplierWcr.lines[i].work)+'</p>':'')+'</section>').join('');
+  const logo=globalThis.brand?.abfm||'abfm.jpg';
+  return '<section class="client-wcr-sheet"><header class="client-wcr-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2>WORK COMPLETION REPORT</h2></header>'+
+    '<div class="client-wcr-meta">'+
+    '<div><strong>Quotation / Contract Ref #:</strong><span>'+e(details.reference)+'</span><strong>Client:</strong><span>'+e(c.client||'')+'</span><strong>Date:</strong><span>'+e(reportDate)+'</span>'+
+    '<strong>Monthly Fixed Cost / Variable:</strong><span>Variable</span><strong>Status:</strong><span>'+(final?'100% Completion':'Partial / In Progress')+'</span></div>'+
+    '<div><strong>Location:</strong><span>'+e((c.building?c.building+' ':'')+(c.site||''))+'</span><strong>Work Order No:</strong><span>'+e(c.order||'')+'</span>'+
+    (final?'<strong>Amount per Client PO / Fixed Monthly Cost:</strong><span>'+money(total(c))+'</span>':'')+
+    '<strong>Work Start Date:</strong><span>'+e(c.started||'')+'</span><strong>Work Complete Date:</strong><span>'+e(reportDate)+'</span></div></div>'+
+    '<p class="client-wcr-description"><strong>Work description:</strong> '+e(c.request||details.subject)+'</p>'+
+    '<h3>Work details</h3>'+work+
+    '<section class="client-wcr-approvals"><h3>Approvals</h3><div>'+sign(supplier,'Service Provider - Engineer / Manager')+
+    sign(null,'End User – JAFZA / DPW')+sign(verification.signature,'Client Representative / ABFM Engineer')+'</div></section>'+
+    '<section class="client-wcr-remarks"><strong>Remarks</strong><p>'+e(c.supplierWcr?.remarks||verification.remarks||'')+'</p></section></section>';
+}
 function report(c,type) {
   const inspection = type === 'Inspection report';
   const tenant=type==='Tenant quotation';
@@ -822,10 +844,8 @@ function report(c,type) {
     dialog.classList.add('quotation-dialog');
     dialog.setAttribute('aria-labelledby','quote-title');
   }
-  dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
-    (wcr?'<p>Quotation ref. '+e(quotationFields(c,false).reference)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p><p class="inspection-comment"><strong>Supplier report remarks:</strong> '+e(c.supplierWcr?.remarks||'–')+'</p>':'')+
-    rows(heads,lines)+
-    (wcr?reinspectionSignatures(c,c.supplierWcr,c.reinspectionVerification):''))+
+  dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : wcr ? workCompletionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+    rows(heads,lines))+
     (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
     (quote&&c.step<7?quotationEditor(quotationFieldSpecs.filter(([key])=>!tenant||key!=='contact'),quotationFields(c,tenant))+'<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> ':'')+
     '<button class="print">Print / Save PDF</button> '+(quote?'<button class="excel secondary" type="button">Download Excel</button> ':'')+
