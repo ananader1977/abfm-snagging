@@ -18,7 +18,7 @@ function render(){
   if(!state)return;
   for(const record of state.cases){
     const quoteReady=rahatiQuotations(record).length>0;
-    const button=node((record.site||'Property')+' · '+record.id+' · '+(stages[record.step]||'Unknown stage')+(quoteReady?' · Rahati quote received':''),'secondary');
+    const button=node('button',(record.site||'Property')+' · '+record.id+' · '+(stages[record.step]||'Unknown stage')+(quoteReady?' · Rahati quote received':''),'secondary');
     button.type='button';
     button.style.width='100%';
     button.style.margin='8px 0';
