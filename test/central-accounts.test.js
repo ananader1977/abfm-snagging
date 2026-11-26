@@ -1,16 +1,17 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {assignedRecords,passwordDigest,verifyPassword}=require('../central-accounts');
+const {assignedRecords,passwordDigest,verifyPassword,supplierStage}=require('../central-accounts');
 const record={id:'SG-1',client:'DP World',site:'J18',step:7,award:'Rahati Bayti',secret:'ABFM confidential',
   snags:[{ref:'A',qty:2,rate:200,budget:90,profitMargin:0.5}],bids:[{supplier:'Rahati Bayti',reference:'RB-1',rates:[90],total:180},{supplier:'Guardian',total:160}],
   quotationDetails:{client:{reference:'DPW-1'}}};
 test('Rahati sees only its quotation and no ABFM selling information',()=>{
-  const [item]=assignedRecords({cases:[record]},{role:'rahati',supplier:'Rahati Bayti'});
+  const [item]=assignedRecords({cases:[{...record,step:9}]},{role:'rahati',supplier:'Rahati Bayti'});
   assert.equal(item.quotations[0].total,180);
   assert.equal(Object.hasOwn(item.items[0],'rate'),false);
   assert.doesNotMatch(JSON.stringify(item),/200|Guardian|margin|confidential/i);
-  assert.deepEqual(assignedRecords({cases:[{...record,award:'Guardian'}]},{role:'rahati',supplier:'Rahati Bayti'}),[]);
+  assert.deepEqual(assignedRecords({cases:[{...record,step:9,award:'Guardian'}]},{role:'rahati',supplier:'Rahati Bayti'}),[]);
+  assert.equal(supplierStage({role:'rahati',supplier:'Rahati Bayti'},record),null);
 });
 test('client sees issued selling quotation only at assigned properties',()=>{
  const user={role:'client',properties:[{client:'DP World',site:'J18'}]};
