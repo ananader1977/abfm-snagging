@@ -134,6 +134,15 @@ async function hydrate(connection,document){
 }
 
 const setupSql = `
+CREATE TABLE IF NOT EXISTS snagging_user (
+  username text PRIMARY KEY,
+  password_digest text NOT NULL,
+  role text NOT NULL CHECK (role IN ('abfm','rahati','client')),
+  supplier text,
+  properties jsonb NOT NULL DEFAULT '[]'::jsonb,
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS snagging_state (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
