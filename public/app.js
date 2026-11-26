@@ -293,7 +293,6 @@ function dpwQuotationWorkbookData(c){
     rows[row-1]=[index+1,snag.ref,snag.description,snag.unit,snag.qty,snag.rate,subtotal,subtotal];
     for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+row]=col===1||col===5||col>=6?2:4;
   });
-  const firstTotal=headerRow+c.snags.length+1;
   const subtotal=total(c),vat=amount(subtotal,.05);
   const totals=[['Total Value',subtotal],['Discount (if applicable)',0],['Total after Discount',subtotal],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',subtotal+vat]];
   totals.forEach(([name,number],offset)=>{
