@@ -34,7 +34,8 @@ function wireSubmit(form,handler){
   };
 }
 function quotationForm(record,c){
-  const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · Target budget '+money(line.vendorBudget)+' · Qty '+line.qty,'number',
+  const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · '+
+    (Number.isFinite(line.vendorBudget)?'Target budget '+money(line.vendorBudget):'Non-BOQ · excluded from target')+' · Qty '+line.qty,'number',
     'min="0" max="100000000" step=".01" value="'+(Number.isFinite(line.vendorBudget)?line.vendorBudget:'')+'"')).join('');
   return '<p>'+e(record.instructions||'')+'</p><form id="supplierQuote">'+field('reference','Quotation reference')+inputs+
     '<p id="supplierTarget" role="status"></p><label>Quotation format<select name="template"><option value="detailed">Detailed RFQ and rectification</option><option value="standard">Standard service quotation</option></select></label>'+
