@@ -124,3 +124,50 @@
 .wcr-signatures h3{margin-bottom:8px}
 .wcr-signatures p{margin:6px 0}
 .wcr-signature-image{display:block;max-width:min(180px,100%);max-height:70px;object-fit:contain;object-position:left}
+
+/* Supplied DP World quotation template */
+.quote-sheet{font:9pt Tahoma,Arial,sans-serif;color:#000;line-height:1.15}
+.quote-heading{border:0;padding:0;margin:0 0 6px;min-height:0}
+.quote-heading img{width:52px;height:34px;object-fit:contain}
+.quote-sheet dl{font:9pt Tahoma,Arial,sans-serif;border:1px solid #000;border-radius:0;padding:4px 6px}
+.quote-sheet table{color:#000;border:1px solid #000}
+.quote-sheet :is(td,th){border:1px solid #000;padding:4px}
+.quote-lines th{color:#000;background:#fff;text-align:center}
+.quote-totals tr:last-child{font-weight:bold;background:#fff}
+.quote-remarks{border:1px solid #000;border-radius:0}
+@media print{
+  .quote-sheet{font:9pt Tahoma,Arial,sans-serif;line-height:1.15}
+  .quote-lines th,.quote-totals tr:last-child{background:#fff!important;color:#000!important}
+  .quote-sheet :is(td,th){border-color:#000}
+}
+.latest-rahati-rate{color:#13733f}
+.latest-rahati-label{font-size:.82em;color:#13733f}
+.client-wcr-sheet{font:12px Arial,sans-serif;color:#111;line-height:1.35}
+.client-wcr-heading{display:grid;grid-template-columns:72px 1fr 72px;align-items:center;margin-bottom:12px}
+.client-wcr-heading img{width:64px;height:48px;object-fit:contain}
+.client-wcr-heading h2{text-align:center;font-size:18px;margin:0}
+.client-wcr-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.client-wcr-meta>div{display:grid;grid-template-columns:minmax(160px,1fr) minmax(160px,1.5fr);border:1px solid #222;padding:7px;gap:5px 8px}
+.client-wcr-meta strong{font-weight:bold}
+.client-wcr-description{border:1px solid #222;padding:7px}
+.client-wcr-sheet h3{text-align:center;margin:14px 0 8px}
+.client-wcr-item{margin:10px 0 16px;break-inside:avoid}
+.client-wcr-photos{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.client-wcr-photos figure{margin:5px 0;text-align:center}
+.client-wcr-photos img{max-width:100%;max-height:240px;object-fit:contain}
+.client-wcr-approvals{break-before:page}
+.client-wcr-approvals>div{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.client-wcr-sign{min-height:120px;border:1px solid #222;padding:8px}
+.client-wcr-sign-line{height:54px;border-bottom:1px solid #222;display:flex;align-items:center}
+.client-wcr-sign-line img{max-height:50px;max-width:100%}
+.client-wcr-remarks{break-before:page;min-height:180px;border:1px solid #222;padding:10px}
+.work-completion-dialog{width:min(1000px,96vw);max-height:92vh}
+@page work-completion{size:A4 portrait;margin:12mm}
+@media print{
+  dialog.work-completion-dialog[open]{page:work-completion;max-height:none;overflow:visible;margin:0;padding:0}
+  .client-wcr-meta,.client-wcr-item,.client-wcr-approvals{break-inside:avoid}
+}
+@media(max-width:600px){
+  .client-wcr-meta,.client-wcr-approvals>div{grid-template-columns:1fr}
+  .client-wcr-meta>div{grid-template-columns:1fr 1fr}
+}
