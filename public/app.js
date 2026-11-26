@@ -360,7 +360,7 @@ function quoteWorkbookData(sheet) {
   const heading=sheet.querySelector('h2').textContent.trim();
   const lines=[[heading]],pictures=[],classNames=new Set();
   const rahati=sheet.classList.contains('rahati-sheet');
-  const append=(values,format)=>{lines.push(values);if(format)classNames.add(lines.length);};
+  const append=(values,format)=>{lines.push(values);if(format)classNames.add(lines.length);return lines.length-1;};
   for(const node of sheet.querySelectorAll('.quote-meta dt,.quote-subject dt,.quote-terms dt'))append([node.textContent.trim(),node.nextElementSibling.textContent.trim()]);
   for(const node of sheet.querySelectorAll('.rahati-identifiers strong'))append([node.textContent.trim()]);
   for(const node of sheet.querySelectorAll('.rahati-meta > div'))append(Array.from(node.children,child=>child.textContent.trim()));
@@ -371,17 +371,19 @@ function quoteWorkbookData(sheet) {
     const headers=Array.from(table.tHead?.rows[0]?.cells||[],cell=>cell.textContent.trim());
     for(const row of table.rows){
       const header=row.parentElement.tagName==='THEAD';
+      const rowPictures=[];
       const values=Array.from(row.cells,(cell,index)=>{
         const image=cell.querySelector('img');
         if(image){
           const source=image.getAttribute('src');
-          if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source||''))pictures.push({row:lines.length,column:index,source});
+          if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source||''))rowPictures.push({column:index,source,description:headers[index]||'Quotation photo'});
           return '';
         }
         const text=cell.innerText.trim(),numeric=!header&&(totals?index===1:numericColumns.test(headers[index]||'')),clean=text.replace(/^AED\s*/i,'').replace(/,/g,'');
         return numeric&&/^\d+(?:\.\d+)?$/.test(clean)?Number(clean):text;
       });
-      append(values,header||/^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
+      const targetRow=append(values,header||/^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
+      rowPictures.forEach(picture=>pictures.push({...picture,row:targetRow}));
     }
   }
   for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks'))append([node.innerText.trim()]);
@@ -465,13 +467,13 @@ function buildQuotationWorkbook(data) {
     if(extension==='webp')continue;
     const id=drawings.length+1, filename='photo'+id+'.'+extension;
     parts['xl/media/'+filename]=Uint8Array.from(atob(encoded),char=>char.charCodeAt(0));
-    drawings.push({id,row,column,filename});
+    drawings.push({id,row,column,filename,description:data.pictures.find(item=>item.row===row&&item.column===column)?.description||'Quotation photo'});
   }
   if(drawings.length){
     parts['xl/worksheets/_rels/sheet1.xml.rels']=relationships([[1,'drawing','../drawings/drawing1.xml']]);
     parts['xl/drawings/_rels/drawing1.xml.rels']=relationships(drawings.map(d=>[d.id,'image','../media/'+d.filename]));
-    parts['xl/drawings/drawing1.xml']='<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+drawings.map(({id,row,column})=>
-      '<xdr:oneCellAnchor><xdr:from><xdr:col>'+column+'</xdr:col><xdr:colOff>28575</xdr:colOff><xdr:row>'+row+'</xdr:row><xdr:rowOff>28575</xdr:rowOff></xdr:from><xdr:ext cx="990600" cy="666750"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="'+id+'" name="Before photo '+id+'"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId'+id+'"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>').join('')+'</xdr:wsDr>';
+    parts['xl/drawings/drawing1.xml']='<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+drawings.map(({id,row,column,description})=>
+      '<xdr:oneCellAnchor editAs="oneCell"><xdr:from><xdr:col>'+column+'</xdr:col><xdr:colOff>28575</xdr:colOff><xdr:row>'+row+'</xdr:row><xdr:rowOff>28575</xdr:rowOff></xdr:from><xdr:ext cx="990600" cy="666750"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="'+id+'" name="'+xml(description)+' · BOQ row '+(row+1)+'"/><xdr:cNvPicPr/><xdr:blipFill><a:blip r:embed="rId'+id+'"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>').join('')+'</xdr:wsDr>';
   }
   parts['[Content_Types].xml']='<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
     (drawings.length?'<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>':'')+'</Types>';
