@@ -269,12 +269,19 @@ function bidComparison(c) {
       })));
 }
 function findScopes(catalog,query) {
-  const words=query.toLowerCase().match(/[\p{L}\p{N}]+/gu)||[];
-  if(!words.length)return [];
-  return catalog.filter(line=>{
-    const description=line.description.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ');
-    return words.every(word=>description.includes(word));
-  });
+  const normalize=text=>String(text).normalize('NFKD').toLowerCase().replace(/\p{M}/gu,'');
+  const ignored=new Set(['a','an','and','for','in','of','the','to']);
+  const words=normalize(query).match(/[\p{L}\p{N}]+/gu)||[];
+  const terms=[...new Set(words.filter(word=>!ignored.has(word)).map(word=>word.length>3?word.replace(/s$/,''):word))];
+  if(!terms.length)return {matches:[],partial:false};
+  const ranked=catalog.map(line=>{
+    const description=normalize(line.description);
+    return {line,score:terms.filter(term=>description.includes(term)).length};
+  }).filter(match=>match.score>0);
+  const exact=ranked.filter(match=>match.score===terms.length);
+  if(exact.length)return {matches:exact.map(match=>match.line),partial:false};
+  const highest=Math.max(0,...ranked.map(match=>match.score));
+  return {matches:ranked.filter(match=>match.score===highest).map(match=>match.line),partial:true};
 }
 function render() {
   $('cases').innerHTML=cases.map((c,i)=>'<button class="secondary" id="case'+i+'">'+e(c.id)+' · '+e(c.site)+'</button>').join('');
@@ -305,7 +312,7 @@ function render() {
   let panel='';
   if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('date','Inspection date','date'),'Assign inspection');
   if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
-    '<label>Matching BOQ scopes<select name="scopeMatch" required><option value="">Search by description first</option></select></label>'+
+    '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
     field('ref','ABFM BOQ reference','text','readonly')+'<div id="ratePreview" class="meta"></div>'+field('unit','Unit of measure')+field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
   if(c.step===3||c.step===4){
@@ -333,32 +340,56 @@ function render() {
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
   if ($('snag')) {
     const fields=$('snag').elements;
-    const picker=fields.scopeMatch;
-    const preview=()=>{
-      const line=catalog.find(x=>x.ref===picker.value);
+    const resultList=$('scopeResults');
+    const status=$('scopeStatus');
+    const applyScope=line=>{
+      fields.scopeMatch.value=line?.ref||'';
       fields.ref.value=line?.ref||'';
       fields.unit.value=line?.unit||'';
       fields.unit.readOnly=Boolean(line?.unit);
       $('ratePreview').textContent=line
-        ? 'Vendor Budget '+(Number.isFinite(line.budget)?money(line.budget):'requires review')+' · ABFM BOQ Price '+(Number.isFinite(line.rate)?money(line.rate):'requires review')
+        ? line.description+' · Vendor Budget '+(Number.isFinite(line.budget)?money(line.budget):'requires review')+' · ABFM BOQ Price '+(Number.isFinite(line.rate)?money(line.rate):'requires review')
         : '';
+      for(const button of resultList.children)button.setAttribute('aria-pressed',String(button.dataset.ref===line?.ref));
     };
-    fields.scopeSearch.oninput=()=>{
-      const matches=findScopes(catalog,fields.scopeSearch.value);
-      const prompt=matches.length?'Select the matching scope':fields.scopeSearch.value.trim()?'No matching scopes':'Search by description first';
-      picker.replaceChildren(new Option(prompt,''));
-      for(const line of matches)picker.add(new Option(line.description+' · '+line.ref+(line.unit?' · '+line.unit:''),line.ref));
-      if(matches.length===1)picker.value=matches[0].ref;
-      preview();
+    const showMatches=()=>{
+      applyScope(null);
+      resultList.replaceChildren();
+      const query=fields.scopeSearch.value.trim();
+      const {matches,partial}=findScopes(catalog,query);
+      const demoHint=catalog===demoBoq?' Only demo items are loaded. Import ABFM_Consolidated_BOQ.xlsx to search your BOQ.':'';
+      status.textContent=matches.length
+        ? matches.length+(partial?' related scope(s). Select the correct line.':' matching scope(s).')+demoHint
+        : (query?'No matching scope. Try a shorter phrase.':'Type a few words from the scope.')+demoHint;
+      for(const line of matches.slice(0,30)){
+        const result=document.createElement('button');
+        result.type='button';
+        result.className='secondary';
+        result.dataset.ref=line.ref;
+        result.setAttribute('aria-pressed','false');
+        result.textContent=line.description+' · '+line.ref+(line.unit?' · '+line.unit:'');
+        result.onclick=()=>applyScope(line);
+        resultList.append(result);
+      }
+      if(matches.length>30)status.textContent+=' Showing the first 30. Refine the search to narrow the list.';
+      if(matches.length===1&&!partial)applyScope(matches[0]);
     };
-    picker.onchange=preview;
+    fields.scopeSearch.addEventListener('input',showMatches);
+    fields.scopeSearch.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){
+        event.preventDefault();
+        resultList.firstElementChild?.focus();
+      }
+    });
+    showMatches();
   }
   if ($('vendorCard')) $('vendorCard').onclick=()=>downloadRateCard(c);
   bind('vendorReturn',v=>importRahatiBid(c,v.quotation));
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
   bind('snag',async v=>{
     const line=catalog.find(x=>x.ref===v.scopeMatch);
-    if(!line||!Number.isFinite(line.budget)||!Number.isFinite(line.rate))throw Error('This BOQ item needs a single numeric Vendor Budget and ABFM BOQ Price. Correct the source workbook and reimport it.');
+    if(!line)throw Error('Select a matching scope from the search results.');
+    if(!Number.isFinite(line.budget)||!Number.isFinite(line.rate))throw Error('This BOQ item needs a single numeric Vendor Budget and ABFM BOQ Price. Correct the source workbook and reimport it.');
     const unit=line.unit||v.unit.trim();
     if(!unit)throw Error('Enter the unit of measure for this BOQ scope.');
     c.snags.push({...line,unit,location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
