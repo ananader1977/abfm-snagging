@@ -36,7 +36,7 @@ function supplierCase(c,user){
     request:c.request,quotationReference:c.quotationReference,order:c.order,started:c.started,submitted:c.submitted,
     items:c.snags.map(item=>({
       ref:item.ref,source:item.source||'BOQ',description:item.description,location:item.location,unit:item.unit,qty:item.qty,
-      vendorBudget:Number.isFinite(item.rate)?Math.round(item.rate*0.79*100)/100:null,before:item.before,
+      vendorBudget:item.source!=='Non-BOQ'&&!String(item.ref||'').startsWith('NBOQ-')&&Number.isFinite(item.rate)?Math.round(item.rate*0.79*100)/100:null,before:item.before,
       ...(submitting?{after:item.after,result:item.result}:{})
     })),
     quotations:c.bids.filter(bid=>bid.supplier===user.supplier).map(bid=>({
