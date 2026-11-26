@@ -114,3 +114,8 @@
 .quote-remarks>div,.rahati-remarks>div,.rahati-terms p,.quote-sheet dd{white-space:pre-wrap;overflow-wrap:anywhere}
 .rahati-remarks{margin-top:10px;padding:6px;border:1px solid #91aebb;break-inside:avoid}
 @media print{.quotation-editor,.quote-save-status{display:none!important}}
+
+.install{white-space:nowrap}
+.install[hidden]{display:none}
+.install-help{width:min(460px,94vw)}
+@media(max-width:520px){header .install{margin-left:auto}header .install:not([hidden])+.logout{margin-left:0}}
