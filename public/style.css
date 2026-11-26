@@ -171,3 +171,26 @@
   .client-wcr-meta,.client-wcr-approvals>div{grid-template-columns:1fr}
   .client-wcr-meta>div{grid-template-columns:1fr 1fr}
 }
+
+/* Shared signature and completion report print layout */
+.inspection-signature-grid,.quote-signatures{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.inspection-signature-grid>div,.quote-signatures>div{border:1px solid #333;padding:10px;min-height:88px;break-inside:avoid}
+.inspection-signature-grid span,.quote-signatures span{display:block;margin-top:10px}
+.quote-sign-line{height:34px;border-bottom:1px solid #222}
+.client-wcr-heading{grid-template-columns:minmax(90px,1fr) auto minmax(90px,1fr)}
+.client-wcr-heading img{width:130px;height:60px;object-fit:contain}
+.client-wcr-heading .client-wcr-dpw-logo{justify-self:end}
+.client-wcr-approvals>div{grid-template-columns:repeat(2,minmax(0,1fr))}
+.client-wcr-item{border:1px solid #222;padding:9px;margin:10px 0 14px;break-inside:avoid}
+.client-wcr-item-description{border:1px solid #777;padding:7px;margin-bottom:8px;min-height:34px}
+.client-wcr-photos{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.client-wcr-photo{margin:0;border:1px solid #777;padding:6px;display:flex;flex-direction:column;break-inside:avoid}
+.client-wcr-photo img,.client-wcr-photo-empty{width:100%;height:72mm;object-fit:contain;background:#fff}
+.client-wcr-photo-empty{display:grid;place-items:center;color:#777;border:1px dashed #aaa}
+.client-wcr-photo figcaption{text-align:center;font-weight:700;border-top:1px solid #aaa;padding:5px;margin-top:4px}
+.client-wcr-work{border:1px solid #aaa;padding:7px;margin:8px 0 0;white-space:pre-wrap}
+@media print{
+  .client-wcr-photo img,.client-wcr-photo-empty{height:72mm}
+  .client-wcr-item,.client-wcr-photo,.client-wcr-item-description{break-inside:avoid}
+  .inspection-signature-grid,.quote-signatures{break-inside:avoid}
+}
