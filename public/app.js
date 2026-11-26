@@ -241,7 +241,7 @@ function quoteWorkbookData(sheet) {
       append(values,header || /^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
     }
   }
-  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div')){
+  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks')){
     append([node.innerText.trim()]);
   }
   return {lines,classNames,pictures};
@@ -351,9 +351,28 @@ function downloadQuotationExcel(dialog,filename) {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+
+const rahatiFieldSpecs=[
+  ['reference','Quotation reference',true],['date','Date',true,'date'],['recipient','To',true],
+  ['address','Address'],['phone','Telephone'],['subject','Quotation For',true],
+  ['requester','Requester Name'],['location','Location'],['task','Task ID'],
+  ['response','Service Provider Response',false,'textarea'],['instructions','Site instructions',false,'textarea'],
+  ['notes','General Notes & Special Conditions',false,'textarea'],['payment','Terms of Payment'],
+  ['remarks','Remarks',false,'textarea']
+];
+function rahatiQuotationFields(c,reference,template) {
+  return {
+    date:quotationFields(c,false).date,recipient:'Al Bonian FM',address:c.site||'',phone:'',
+    subject:'Reinstatement works · '+c.site,requester:c.contact||'',location:c.site||'',
+    task:c.inspection||c.id,response:'Quoted BOQ items are listed below',instructions:c.rfq?.instructions||'',
+    notes:'As agreed for this quotation.',payment:'As agreed.',remarks:'',
+    ...c.rahatiQuotationDetails?.[template],reference
+  };
+}
 function rahatiQuotationDocument(c,reference,rates,template) {
   const detailed=template==='detailed';
-  const today=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai'}).format(new Date());
+  const details=rahatiQuotationFields(c,reference,template);
+  const date=details.date.split('-').reverse().join('/');
   const logo=globalThis.brand?.rahati || 'rahati.png';
   const subtotalCents=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
   const vatCents=Math.round(subtotalCents*.05);
@@ -366,25 +385,27 @@ function rahatiQuotationDocument(c,reference,rates,template) {
       :[i+1,description,e(line.unit),e(line.qty),rate,total];
   });
   const technical=detailed?'<h3>General Information</h3>'+
-    rows(['Requester Name','Location','Task ID'],[[e(c.contact||'–'),e(c.site),e(c.inspection||c.id)]])+
+    rows(['Requester Name','Location','Task ID'],[[e(details.requester||'–'),e(details.location||'–'),e(details.task||'–')]])+
     '<h3>Technical Qualification Sheet</h3>'+
-    rows(['SN','Description','Service Provider Response'],[[1,'Scope of work as per RFQ','Quoted BOQ items are listed below'],[2,'Site instructions',e(c.rfq?.instructions||'–')]]):'';
+    rows(['SN','Description','Service Provider Response'],[[1,'Scope of work as per RFQ',e(details.response||'–')],[2,'Site instructions',e(details.instructions||'–')]]):'';
   return '<section class="rahati-sheet '+(detailed?'rahati-detailed':'rahati-standard')+'">'+
     '<div class="rahati-heading"><img src="'+e(logo)+'" alt="Rahati Bayti Technical Services"><div><h2 id="rahati-quote-title">QUOTATION</h2><div lang="ar" dir="rtl">عرض أسعار</div></div></div>'+
-    '<div class="rahati-identifiers"><strong>No. '+e(reference)+'</strong><strong>Date: '+e(today)+'</strong></div>'+
-    '<div class="rahati-meta">'+meta('To:','Al Bonian FM','حضرة')+meta('Address:',c.site,'العنوان')+
-    meta('Quotation For:','Reinstatement works · '+c.site,'عرض لزوم')+'</div>'+
+    '<div class="rahati-identifiers"><strong>No. '+e(details.reference)+'</strong><strong>Date: '+e(date)+'</strong></div>'+
+    '<div class="rahati-meta">'+meta('To:',details.recipient,'حضرة')+meta('Address:',details.address,'العنوان')+meta('Tel.:',details.phone,'هاتف')+
+    meta('Quotation For:',details.subject,'عرض لزوم')+'</div>'+
     (detailed?'<p class="rahati-rfq">Request For Quotation (RFQ)<br>Procurement and Logistics Department</p>':'')+
     technical+'<div class="rahati-items">'+rows(headings,items)+'</div>'+
     '<table class="rahati-totals"><tbody>'+
     [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',subtotalCents+vatCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
-    '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>As agreed for this quotation.</p></div>'+
-    '<div><strong>Terms of Payment</strong><p>As agreed.</p></div><div><strong>Authorized Stamp</strong></div></div></section>';
+    '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>'+e(details.notes)+'</p></div>'+
+    '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div></div>'+
+    '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div></section>';
 }
 function showRahatiQuotation(c,bidForm) {
   const formData=new FormData(bidForm);
   if (formData.get('supplier')!=='Rahati Bayti' || !bidForm.reportValidity())return;
-  const reference=String(formData.get('reference')||'').trim();
+  let reference=String(formData.get('reference')||'').trim();
+  const template=formData.get('rahatiTemplate')==='standard'?'standard':'detailed';
   const rates=c.snags.map((_,i)=>readRate(formData.get('rate'+i)));
   if(!reference || rates.some(rate=>rate===null)){
     $('error').textContent='Enter a quotation reference and a valid rate for each item.';
@@ -393,11 +414,23 @@ function showRahatiQuotation(c,bidForm) {
   const dialog=document.createElement('dialog');
   dialog.className='rahati-quotation-dialog';
   dialog.setAttribute('aria-labelledby','rahati-quote-title');
-  dialog.innerHTML=rahatiQuotationDocument(c,reference,rates,formData.get('rahatiTemplate'))+
+  const renderSheet=()=>rahatiQuotationDocument(c,reference,rates,template);
+  const specs=rahatiFieldSpecs.filter(([key])=>template==='detailed'||!['requester','location','task','response','instructions'].includes(key));
+  dialog.innerHTML=renderSheet()+quotationEditor(specs,rahatiQuotationFields(c,reference,template))+
+    '<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> '+
     '<button class="print" type="button">Print / Save PDF</button> <button class="excel secondary" type="button">Download Excel</button> <button class="dismiss secondary" type="button">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
-  dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,reference+'-Rahati-'+formData.get('rahatiTemplate'));
+  dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,reference+'-Rahati-'+template);
+  wireQuotationEditor(dialog,renderSheet,updates=>{
+    const previous=c.rahatiQuotationDetails;
+    c.rahatiQuotationDetails={...previous,[template]:updates};
+    try{localStorage.setItem(storeKey,JSON.stringify(cases));}
+    catch(error){c.rahatiQuotationDetails=previous;throw Error('Unable to save quotation details: '+error.message);}
+    reference=updates.reference;
+    bidForm.elements.reference.value=reference;
+    return 'Quotation details saved.';
+  });
   dialog.querySelector('.dismiss').onclick=()=>dialog.close();
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
@@ -453,8 +486,91 @@ function inspectionReport(c) {
   }).join('');
 }
 
+
+const quotationFieldSpecs=[
+  ['client','Client Name',true],['property','Property Name',true],['contact','Contact Person'],
+  ['location','Works Location',true],['reference','Ref. No.',true],['date','Date',true,'date'],['task','Task ID'],
+  ['subject','Subject',true],['requirement','Works Requirement'],['additional','Additional Information'],
+  ['validity','Quotation Validity'],['delivery','Materials Delivery Period'],['completion','Works Completion Period'],
+  ['warranty','Warranty (as applicable)'],['urgency','Urgency of Works'],['payment','Payment Terms'],['remarks','Remarks',false,'textarea']
+];
+const quotationKey=tenant=>tenant?'tenant':'client';
+function quotationFields(c,tenant) {
+  const dateParts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const part=type=>dateParts.find(item=>item.type===type).value;
+  const days=c.days||duration(total(c));
+  return {
+    client:c.client||'',property:c.building||c.site||'',contact:c.contact||'',location:c.site||'',
+    reference:tenant?c.id+'-Tenant':c.id,date:part('year')+'-'+part('month')+'-'+part('day'),
+    task:c.inspection||c.reinstatement||c.id,subject:'EOL Reinstatement Works – '+c.site,
+    requirement:'End of lease reinstatement',additional:'',validity:'30 Days',delivery:'',
+    completion:days?days+' days from order confirmation':'To be agreed',
+    warranty:'',urgency:c.priority||'',payment:'As per agreement',remarks:'',
+    ...c.quotationDetails?.[quotationKey(tenant)]
+  };
+}
+function quotationEditor(specs,fields) {
+  return '<form class="quotation-editor" hidden><h3>Edit quotation details</h3><p class="error" role="alert"></p>'+
+    specs.map(([key,label,required,type])=>{
+      const field=type==='textarea'?'<textarea name="'+key+'" maxlength="2000" rows="3">'+e(fields[key])+'</textarea>'
+        : '<input name="'+key+'" type="'+(type||'text')+'"'+(required?' required':'')+' maxlength="500" value="'+e(fields[key])+'">';
+      return '<label>'+label+field+'</label>';
+    }).join('')+
+    '<button type="submit">Save details</button><button type="button" class="cancel-edit secondary">Cancel</button></form>';
+}
+function wireQuotationEditor(dialog,renderSheet,saveDetails) {
+  const editor=dialog.querySelector('.quotation-editor');
+  const edit=dialog.querySelector('.edit-quotation');
+  const notice=dialog.querySelector('.quote-save-status');
+  const print=dialog.querySelector('.print'),excel=dialog.querySelector('.excel');
+  const toggle=open=>{
+    editor.hidden=!open;
+    edit.hidden=open;
+    print.disabled=excel.disabled=open;
+    if(open){
+      notice.textContent='';
+      editor.querySelector('input,textarea')?.focus();
+    }
+  };
+  edit.onclick=()=>toggle(true);
+  editor.querySelector('.cancel-edit').onclick=()=>{editor.reset();editor.querySelector('.error').textContent='';toggle(false);};
+  editor.onsubmit=event=>{
+    event.preventDefault();
+    const updates=Object.fromEntries(Array.from(new FormData(editor),([key,value])=>[key,value.trim()]));
+    try{
+      const result=saveDetails(updates);
+      if(result){
+        dialog.querySelector('.quote-sheet,.rahati-sheet').outerHTML=renderSheet();
+        for(const [key,value] of Object.entries(updates))editor.elements[key].defaultValue=value;
+      }
+      toggle(false);
+      notice.textContent=result||'';
+    }catch(error){editor.querySelector('.error').textContent=error.message;}
+  };
+}
+function attachQuotationEditor(dialog,c,tenant) {
+  wireQuotationEditor(dialog,()=>quotationDocument(c,tenant),updates=>{
+    if(c.step>=7)throw Error('These quotation details are locked after client submission.');
+    const previousFields=quotationFields(c,tenant);
+    const changed=Object.keys(updates).filter(key=>updates[key]!==String(previousFields[key]??''));
+    if(!changed.length)return '';
+    const material=['requirement','additional','validity','delivery','completion','warranty','urgency','payment','remarks'];
+    const reapproval=c.step===6&&changed.some(key=>material.includes(key));
+    const previous={quotationDetails:c.quotationDetails,step:c.step,history:c.history.slice()};
+    c.quotationDetails={...c.quotationDetails,[quotationKey(tenant)]:updates};
+    if(reapproval)move(c,5);
+    log(c,(tenant?'Tenant':'DP World')+' quotation details updated');
+    try{save();}
+    catch(error){
+      Object.assign(c,previous);
+      throw Error('Unable to save quotation details: '+error.message);
+    }
+    return reapproval?'Details saved. Updated terms require CS approval before submission.':'Quotation details saved.';
+  });
+}
 function quotationDocument(c,tenant) {
-  const today=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai'}).format(new Date());
+  const details=quotationFields(c,tenant);
+  const date=details.date.split('-').reverse().join('/');
   const title=tenant?'DPW -TENANT -PROPOSAL':'DPW-EOL-PROPOSAL';
   const logo=globalThis.brand?.abfm || 'abfm.jpg';
   const displayAmount=value=>new Intl.NumberFormat('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value);
@@ -472,18 +588,18 @@ function quotationDocument(c,tenant) {
   const totals=[['Total Value',value],['Discount (if applicable)',0],['Total after Discount',value],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',value+vat]];
   return '<section class="quote-sheet '+(tenant?'quote-tenant':'quote-client')+'">'+
     '<div class="quote-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2 id="quote-title">'+title+'</h2></div>'+
-    '<div class="quote-meta"><dl>'+row('Client Name:',c.client)+row('Property Name:',c.building||c.site)+
-    (tenant?'':row('Contact Person:',c.contact))+row('Works Location:',c.site)+'</dl>'+
-    '<dl>'+row('Ref. No.',tenant?c.id+'-Tenant':c.id)+row('Date',today)+row('Task ID.',c.inspection||c.reinstatement||c.id)+'</dl></div>'+
-    '<dl class="quote-subject">'+row('Subject:','EOL Reinstatement Works – '+c.site)+'</dl>'+
-    '<div class="quote-terms"><dl>'+row('Works Requirement:','End of lease reinstatement')+row('Additional Information:','')+'</dl>'+
-    '<dl>'+row('Quotation Validity:','30 Days')+row('Materials Delivery Period:','')+
-    row('Works Completion Period:',(c.days||duration(value))?(c.days||duration(value))+' days from order confirmation':'To be agreed')+
-    row('Warranty (as applicable):','')+row('Urgency of Works:',c.priority)+row('Payment Terms:','As per agreement')+'</dl></div>'+
+    '<div class="quote-meta"><dl>'+row('Client Name:',details.client)+row('Property Name:',details.property)+
+    (tenant?'':row('Contact Person:',details.contact))+row('Works Location:',details.location)+'</dl>'+
+    '<dl>'+row('Ref. No.',details.reference)+row('Date',date)+row('Task ID.',details.task)+'</dl></div>'+
+    '<dl class="quote-subject">'+row('Subject:',details.subject)+'</dl>'+
+    '<div class="quote-terms"><dl>'+row('Works Requirement:',details.requirement)+row('Additional Information:',details.additional)+'</dl>'+
+    '<dl>'+row('Quotation Validity:',details.validity)+row('Materials Delivery Period:',details.delivery)+
+    row('Works Completion Period:',details.completion)+row('Warranty (as applicable):',details.warranty)+
+    row('Urgency of Works:',details.urgency)+row('Payment Terms:',details.payment)+'</dl></div>'+
     '<table class="quote-lines"><colgroup>'+headers.map(()=>'<col>').join('')+'</colgroup>'+
     '<thead><tr>'+headers.map(header=>'<th scope="col">'+header+'</th>').join('')+'</tr></thead><tbody>'+lineRows+'</tbody></table>'+
     '<table class="quote-totals"><tbody>'+totals.map(([label,number])=>'<tr><th scope="row">'+label+'</th><td>'+displayAmount(number)+'</td></tr>').join('')+'</tbody></table>'+
-    '<div class="quote-remarks"><strong>Remarks:</strong></div>'+
+    '<div class="quote-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-footer"><span>Document Code: ABFM-ADM-QUO-001-2022-00<br>Rev. 0</span><span>Classification: Quotation</span><span>Issue No.: 1 Date: 29 Aug. 2022</span></div></section>';
 }
 function report(c,type) {
@@ -510,11 +626,15 @@ function report(c,type) {
     (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
     rows(heads,lines)+
     (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
+    (quote&&c.step<7?quotationEditor(quotationFieldSpecs.filter(([key])=>!tenant||key!=='contact'),quotationFields(c,tenant))+'<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> ':'')+
     '<button class="print">Print / Save PDF</button> '+(quote?'<button class="excel secondary" type="button">Download Excel</button> ':'')+
     '<button class="dismiss secondary">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
-  if(quote)dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,c.id+'-'+(tenant?'Tenant':'DP-World')+'-Quotation');
+  if(quote){
+    dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,quotationFields(c,tenant).reference+'-'+(tenant?'Tenant':'DP-World')+'-Quotation');
+    if(c.step<7)attachQuotationEditor(dialog,c,tenant);
+  }
   dialog.querySelector('.dismiss').onclick=()=>dialog.close();
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
@@ -723,7 +843,11 @@ function render() {
     move(c,5);
   });
   bind('cs',v=>{log(c,'CS approved by '+v.approver);move(c,6);});
-  bind('send',v=>{log(c,'Client submission '+v.submission);move(c,7);});
+  bind('send',v=>{
+    c.quotationDetails={client:quotationFields(c,false),tenant:quotationFields(c,true)};
+    log(c,'Client submission '+v.submission);
+    move(c,7);
+  });
   bind('authorize',v=>{Object.assign(c,v);c.days=duration(total(c))??Number(v.days);log(c,'Client approval '+v.approval);move(c,8);});
   bind('start',v=>{if(v.started<c.ordered)throw Error('Start date precedes order confirmation.');c.started=v.started;move(c,9);});
   bind('wcr',async v=>{
