@@ -194,6 +194,68 @@ function downloadFile(name, content, type) {
   anchor.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+function makeRahatiPdf(card,quote) {
+  const ascii=value=>String(value??'').replace(/[×–—]/g,c=>c==='×'?'x':'-').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^\x20-\x7e]/g,' ');
+  const literal=value=>ascii(value).replace(/[\\()]/g,'\\function downloadRateCard(c) {');
+  const text=(value,x,y,size=10,font='F1')=>'BT /'+font+' '+size+' Tf '+x+' '+y+' Td ('+literal(value)+') Tj ET\n';
+  const formula=(rate,qty)=>Math.round(rate*qty*100);
+  const currency=cents=>new Intl.NumberFormat('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(cents/100);
+  const wrap=(value,length)=>ascii(value).match(new RegExp('.{1,'+length+'}(?:\\s|$)|\\S{1,'+length+'}','g'))||[''];
+  const pages=[];
+  let body='',y=0,total=0;
+  const openPage=()=>{
+    body='0.04 0.17 0.37 rg 32 765 531 40 re f\n1 1 1 rg\n'+text('RAHATI BAYTI | QUOTATION',45,780,16,'F2')+'0 0 0 rg\n';
+    body+=text('Quotation: '+ascii(quote.reference).slice(0,90),36,745)+text('ABFM Case: '+card.caseId,36,727);
+    body+='0.9 0.95 0.97 rg 32 686 531 23 re f\n0 0 0 rg\n'+text('ABFM Ref. / Scope',40,694,10,'F2')+
+      text('Unit',326,694,10,'F2')+text('Qty',374,694,10,'F2')+text('Rate AED',414,694,10,'F2')+text('Total AED',493,694,10,'F2');
+    y=665;
+  };
+  const closePage=()=>{
+    body+=text('Rahati Bayti | '+card.caseId,36,29,9)+text('Page '+(pages.length+1),510,29,9);
+    pages.push(body);
+  };
+  openPage();
+  card.lines.forEach((line,index)=>{
+    const cost=formula(Number(quote.lines[index].rate),line.qty);
+    total+=cost;
+    const description=wrap(line.description,57);
+    const textLines=[line.ref,...description];
+    for(let i=0;i<textLines.length;i++){
+      if(y<62){closePage();openPage();}
+      body+=text(textLines[i].trim(),40,y,i===0?10:9,i===0?'F2':'F1');
+      if(i===0){
+        body+=text(line.unit,326,y,9)+text(line.qty,374,y,9)+
+          text(currency(Math.round(Number(quote.lines[index].rate)*100)),414,y,9)+text(currency(cost),493,y,9);
+      }
+      y-=13;
+    }
+    body+='0.82 G 32 '+(y+5)+' m 563 '+(y+5)+' l S\n0 G\n';
+    y-=12;
+  });
+  if(y<75){closePage();openPage();}
+  body+='0.9 0.95 0.97 rg 360 '+(y-8)+' 203 24 re f\n0 0 0 rg\n'+text('Quotation total (AED)',368,y,10,'F2')+text(currency(total),493,y,10,'F2');
+  closePage();
+  const objects=['<< /Type /Catalog /Pages 2 0 R >>','',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'];
+  const pageRefs=[];
+  for(const stream of pages){
+    const page=objects.length+1;
+    pageRefs.push(page+' 0 R');
+    objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents '+(page+1)+' 0 R >>');
+    objects.push('<< /Length '+stream.length+' >>\nstream\n'+stream+'endstream');
+  }
+  objects[1]='<< /Type /Pages /Count '+pages.length+' /Kids [ '+pageRefs.join(' ')+' ] >>';
+  let pdf='%PDF-1.4\n';
+  const offsets=[0];
+  objects.forEach((object,i)=>{offsets.push(pdf.length);pdf+=(i+1)+' 0 obj\n'+object+'\nendobj\n';});
+  const xref=pdf.length;
+  pdf+='xref\n0 '+offsets.length+'\n0000000000 65535 f \n';
+  for(const offset of offsets.slice(1))pdf+=String(offset).padStart(10,'0')+' 00000 n \n';
+  pdf+='trailer\n<< /Size '+offsets.length+' /Root 1 0 R >>\n';
+  pdf+='%ABFM-RAHATI-QUOTE '+encodeURIComponent(JSON.stringify(quote))+'\n';
+  return pdf+'startxref\n'+xref+'\n%%EOF\n';
+}
 function downloadRateCard(c) {
   const catalog=activeBoq();
   const data={caseId:c.id,lines:c.snags.map((s,i)=>({key:lineKey(s,i),ref:s.ref,description:s.description,unit:s.unit,qty:s.qty,budget:vendorBudget(s,catalog)}))};
@@ -201,14 +263,29 @@ function downloadRateCard(c) {
   const html='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Rahati Bayti quotation</title>'+
     '<style>body{font:16px system-ui;margin:24px}table{border-collapse:collapse;width:100%}td,th{padding:8px;text-align:left;border:1px solid #ccc}input{font:inherit;width:110px}button{font:inherit;margin:16px 0}caption{text-align:left}</style>'+
     '<h1>Rahati Bayti rate card</h1><form id="bid"><label>Quotation reference <input name="reference" required></label>'+
-    rows(['ABFM Ref.','ABFM BOQ Description','Unit','Qty','Vendor Budget (AED)','Your rate (AED)'],data.lines.map((s,i)=>[e(s.ref),e(s.description),e(s.unit),e(s.qty),s.budget===null?'Review':money(s.budget),'<input aria-label="Rate for line '+(i+1)+'" name="rate'+i+'" type="number" min="0" max="100000000" step=".01" required value="'+(s.budget??'')+'">']))+
-    '<button>Download quotation for ABFM</button></form><script>const data='+payload+';document.getElementById("bid").onsubmit=function(event){event.preventDefault();const fields=new FormData(this);const quote={caseId:data.caseId,reference:fields.get("reference"),lines:data.lines.map((line,i)=>({key:line.key,rate:fields.get("rate"+i)}))};const url=URL.createObjectURL(new Blob([JSON.stringify(quote)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=data.caseId+"-Rahati-quotation.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>';
+    rows(['ABFM Ref.','ABFM BOQ Description','Unit','Qty','Vendor Budget (AED)','Your rate (AED)','Line total (AED)'],data.lines.map((s,i)=>[e(s.ref),e(s.description),e(s.unit),e(s.qty),s.budget===null?'Review':money(s.budget),'<input aria-label="Rate for line '+(i+1)+'" name="rate'+i+'" type="number" min="0" max="100000000" step=".01" required value="'+(s.budget??'')+'">','<output id="total'+i+'"></output>']))+
+    '<p>Quotation total (AED): <output id="quoteTotal"></output></p><button>Download quotation PDF for ABFM</button></form><script>const data='+payload+';'+
+    makeRahatiPdf.toString()+';const bid=document.getElementById("bid");const format=new Intl.NumberFormat("en-AE",{minimumFractionDigits:2,maximumFractionDigits:2});'+
+    'function updateTotals(){const fields=new FormData(bid);let sum=0;data.lines.forEach((line,i)=>{const value=fields.get("rate"+i);const cents=Math.round(line.qty*Number(value)*100);sum+=cents;document.getElementById("total"+i).textContent=value===""?"—":format.format(cents/100)});document.getElementById("quoteTotal").textContent=format.format(sum/100)}'+
+    'bid.addEventListener("input",updateTotals);updateTotals();bid.onsubmit=function(event){event.preventDefault();const fields=new FormData(this);const quote={caseId:data.caseId,reference:fields.get("reference"),lines:data.lines.map((line,i)=>({key:line.key,rate:fields.get("rate"+i)}))};const url=URL.createObjectURL(new Blob([makeRahatiPdf(data,quote)],{type:"application/pdf"}));const a=document.createElement("a");a.href=url;a.download=data.caseId+"-Rahati-quotation.pdf";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>';
   downloadFile(c.id+'-Rahati-rate-card.html',html,'text/html');
 }
 async function importRahatiBid(c,file) {
-  if (!file?.size || file.size>500000) throw Error('Select the quotation file returned by Rahati Bayti.');
-  const quote=JSON.parse(await file.text());
-  if(quote.caseId!==c.id||!Array.isArray(quote.lines)||quote.lines.length!==c.snags.length)throw Error('This quotation does not match the case.');
+  if (!file?.size || file.size>5000000) throw Error('Select the quotation PDF returned by Rahati Bayti.');
+  const document=await file.text();
+  let quote;
+  try {
+    if(document.startsWith('%PDF-')){
+      const payload=document.match(/^%ABFM-RAHATI-QUOTE ([^\r\n]+)$/m)?.[1];
+      if(!payload || payload.length>500000)throw Error();
+      quote=JSON.parse(decodeURIComponent(payload));
+    } else {
+      quote=JSON.parse(document);
+    }
+  } catch {
+    throw Error('Use the original PDF downloaded from the Rahati rate card, or a previously issued JSON quotation.');
+  }
+  if(quote?.caseId!==c.id||!Array.isArray(quote.lines)||quote.lines.length!==c.snags.length)throw Error('This quotation does not match the case.');
   const rates=quote.lines.map((line,i)=>{
     if(line?.key!==lineKey(c.snags[i],i))throw Error('The quotation lines do not match the issued rate card.');
     return readRate(line.rate);
@@ -371,7 +448,7 @@ function render() {
       '<p id="bidBudgetStatus" class="meta" role="status"></p>'+
       c.snags.map((s,i)=>field('rate'+i,'Supplier rate · '+e(s.ref),'number','min="0" max="100000000" step=".01"')).join(''),'Record quotation revision');
     panel+=button('vendorCard','Download Rahati rate card')+
-      form('vendorReturn',field('quotation','Import quotation returned by Rahati','file','accept=".json,application/json"'),'Import Rahati quotation');
+      form('vendorReturn',field('quotation','Import quotation PDF returned by Rahati','file','accept=".pdf,.json,application/pdf,application/json"'),'Import Rahati quotation');
     if(c.bids.length)panel+=rows(['Supplier','Reference','Bid total'],c.bids.map(b=>[e(b.supplier),e(b.reference),money(b.total)]))+
       form('award','<label>Award recommendation<select name="bid">'+c.bids.map((b,i)=>'<option value="'+i+'">'+e(b.supplier+' · '+b.reference)+'</option>').join('')+'</select></label>'+field('reason','Award justification'),'Send to CS approval');
   }
