@@ -173,7 +173,7 @@ function renderAssigned(message){
       previewSupplierQuotation(c,quote.elements.reference.value.trim(),current,quote.elements.template.value,value=>{quote.elements.reference.value=value;});
     };
     wireSubmit(quote,async fields=>{
-      await supplierWrite(record,'quote',{reference:fields.get('reference'),rates:rates(),details:c.rahatiQuotationDetails});
+      await supplierWrite(record,'quote',{reference:fields.get('reference'),rates:rates(),template:fields.get('template'),details:c.rahatiQuotationDetails});
       await loadAssigned('Your quotation was submitted to ABFM.');
     });
   }
