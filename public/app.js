@@ -187,6 +187,156 @@ function recordBid(c, supplier, reference, rates) {
   move(c,4);
 }
 
+
+function quoteWorkbookData(sheet) {
+  const heading=sheet.querySelector('h2').textContent.trim();
+  const lines=[[heading]];
+  const pictures=[];
+  const classNames=new Set();
+  const append=(values,format)=>{lines.push(values);if(format)classNames.add(lines.length);};
+  for(const node of sheet.querySelectorAll('.quote-meta dt,.quote-subject dt,.quote-terms dt')){
+    append([node.textContent.trim(),node.nextElementSibling.textContent.trim()]);
+  }
+  for(const node of sheet.querySelectorAll('.rahati-identifiers strong')){
+    append([node.textContent.trim()]);
+  }
+  for(const node of sheet.querySelectorAll('.rahati-meta > div')){
+    append(Array.from(node.children,child=>child.textContent.trim()));
+  }
+  const numericColumns=/^(?:#|sn|qty|unit\s*rate|unit\s*price|subtotal|total|amount)$/i;
+  for(const table of sheet.querySelectorAll('table')){
+    append([]);
+    const totals=table.matches('.quote-totals,.rahati-totals');
+    const headers=Array.from(table.tHead?.rows[0]?.cells||[],cell=>cell.textContent.trim());
+    for(const row of table.rows){
+      const header=row.parentElement.tagName==='THEAD';
+      const values=Array.from(row.cells,(cell,index)=>{
+        const image=cell.querySelector('img');
+        if(image){
+          const source=image.getAttribute('src');
+          if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source||'')){
+            pictures.push({row:lines.length,column:index,source});
+          }
+          return '';
+        }
+        const value=cell.innerText.trim();
+        const numeric=!header&&(totals?index===1:numericColumns.test(headers[index]||''));
+        const clean=value.replace(/^AED\s*/i,'').replace(/,/g,'');
+        return numeric&&/^\d+(?:\.\d+)?$/.test(clean)?Number(clean):value;
+      });
+      append(values,header || /^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
+    }
+  }
+  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div')){
+    append([node.innerText.trim()]);
+  }
+  return {lines,classNames,pictures};
+}
+
+function quotationZip(parts) {
+  const encoder=new TextEncoder();
+  const chunks=[], directory=[];
+  const table=Array.from({length:256},(_,i)=>{
+    for(let j=0;j<8;j++)i=(i>>>1)^((i&1)?0xedb88320:0);
+    return i;
+  });
+  let position=0, directoryLength=0;
+  for(const [path,content] of Object.entries(parts)){
+    const name=encoder.encode(path);
+    const bytes=typeof content==='string'?encoder.encode(content):content;
+    let crc=0xffffffff;
+    for(const byte of bytes)crc=(crc>>>8)^table[(crc^byte)&255];
+    crc=(crc^0xffffffff)>>>0;
+    const local=new Uint8Array(30+name.length);
+    const entry=new Uint8Array(46+name.length);
+    const l=new DataView(local.buffer), d=new DataView(entry.buffer);
+    l.setUint32(0,0x04034b50,true);
+    l.setUint16(4,20,true);
+    l.setUint16(12,33,true);
+    l.setUint32(14,crc,true);
+    l.setUint32(18,bytes.length,true);
+    l.setUint32(22,bytes.length,true);
+    l.setUint16(26,name.length,true);
+    local.set(name,30);
+    d.setUint32(0,0x02014b50,true);
+    d.setUint16(4,20,true);
+    d.setUint16(6,20,true);
+    d.setUint16(14,33,true);
+    d.setUint32(16,crc,true);
+    d.setUint32(20,bytes.length,true);
+    d.setUint32(24,bytes.length,true);
+    d.setUint16(28,name.length,true);
+    d.setUint32(42,position,true);
+    entry.set(name,46);
+    chunks.push(local,bytes);
+    directory.push(entry);
+    position+=local.length+bytes.length;
+    directoryLength+=entry.length;
+  }
+  const end=new Uint8Array(22), fields=new DataView(end.buffer);
+  fields.setUint32(0,0x06054b50,true);
+  fields.setUint16(8,directory.length,true);
+  fields.setUint16(10,directory.length,true);
+  fields.setUint32(12,directoryLength,true);
+  fields.setUint32(16,position,true);
+  return new Blob([...chunks,...directory,end],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+
+function buildQuotationWorkbook(data) {
+  const xml=value=>e(String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,''));
+  const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const relationships=entries=>'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+entries.map(([id,type,target])=>'<Relationship Id="rId'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
+  const parts={
+    '_rels/.rels':relationships([[1,'officeDocument','xl/workbook.xml']]),
+    'xl/_rels/workbook.xml.rels':relationships([[1,'worksheet','worksheets/sheet1.xml'],[2,'styles','styles.xml']]),
+    'xl/workbook.xml':'<workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Quotation" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    'xl/styles.xml':'<styleSheet xmlns="'+ns+'"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF173A63"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1"/></xf><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="4" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'
+  };
+  const drawings=[];
+  const pictureRows=new Set(data.pictures.map(item=>item.row));
+  for(const {row,column,source} of data.pictures){
+    const [uri,encoded]=source.split(',');
+    const extension=uri.includes('jpeg')?'jpeg':uri.includes('png')?'png':'webp';
+    if(extension==='webp')continue;
+    const id=drawings.length+1, filename='photo'+id+'.'+extension;
+    parts['xl/media/'+filename]=Uint8Array.from(atob(encoded),char=>char.charCodeAt(0));
+    drawings.push({id,row,column,filename});
+  }
+  if(drawings.length){
+    parts['xl/worksheets/_rels/sheet1.xml.rels']=relationships([[1,'drawing','../drawings/drawing1.xml']]);
+    parts['xl/drawings/_rels/drawing1.xml.rels']=relationships(drawings.map(d=>[d.id,'image','../media/'+d.filename]));
+    parts['xl/drawings/drawing1.xml']='<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+drawings.map(({id,row,column})=>
+      '<xdr:oneCellAnchor><xdr:from><xdr:col>'+column+'</xdr:col><xdr:colOff>28575</xdr:colOff><xdr:row>'+row+'</xdr:row><xdr:rowOff>28575</xdr:rowOff></xdr:from><xdr:ext cx="990600" cy="666750"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="'+id+'" name="Before photo '+id+'"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId'+id+'"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>').join('')+'</xdr:wsDr>';
+  }
+  parts['[Content_Types].xml']='<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
+    (drawings.length?'<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>':'')+'</Types>';
+  const width=[42,58,25,17,17,17,17,17];
+  const sheetRows=data.lines.map((line,i)=>{
+    const row=i+1, bright=i===0||data.classNames.has(row);
+    const height=pictureRows.has(i)?58:Math.min(180,Math.max(18,...line.map((v,j)=>15*Math.ceil(String(v).length/(width[j]||17)))));
+    return '<row r="'+row+'" ht="'+height+'" customHeight="1">'+line.map((value,j)=>{
+      const ref=String.fromCharCode(65+j)+row;
+      if(typeof value==='number')return '<c r="'+ref+'" s="'+(bright?3:2)+'"><v>'+value+'</v></c>';
+      return '<c r="'+ref+'" s="'+(bright?1:0)+'" t="inlineStr"><is><t xml:space="preserve">'+xml(value)+'</t></is></c>';
+    }).join('')+'</row>';
+  }).join('');
+  parts['xl/worksheets/sheet1.xml']='<worksheet xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><cols>'+
+    width.map((n,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+n+'" customWidth="1"/>').join('')+
+    '</cols><sheetData>'+sheetRows+'</sheetData><pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>'+
+    (drawings.length?'<drawing r:id="rId1"/>':'')+'</worksheet>';
+  return quotationZip(parts);
+}
+
+function downloadQuotationExcel(dialog,filename) {
+  const excel=buildQuotationWorkbook(quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet')));
+  const url=URL.createObjectURL(excel);
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=filename.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.xlsx';
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 function rahatiQuotationDocument(c,reference,rates,template) {
   const detailed=template==='detailed';
   const today=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai'}).format(new Date());
@@ -230,9 +380,10 @@ function showRahatiQuotation(c,bidForm) {
   dialog.className='rahati-quotation-dialog';
   dialog.setAttribute('aria-labelledby','rahati-quote-title');
   dialog.innerHTML=rahatiQuotationDocument(c,reference,rates,formData.get('rahatiTemplate'))+
-    '<button class="print" type="button">Print / Save PDF</button> <button class="dismiss secondary" type="button">Close</button>';
+    '<button class="print" type="button">Print / Save PDF</button> <button class="excel secondary" type="button">Download Excel</button> <button class="dismiss secondary" type="button">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
+  dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,reference+'-Rahati-'+formData.get('rahatiTemplate'));
   dialog.querySelector('.dismiss').onclick=()=>dialog.close();
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
@@ -345,9 +496,11 @@ function report(c,type) {
     (wcr?'<p>Quotation ref. '+e(c.id)+' · Work order '+e(c.order)+' · Approved amount '+money(total(c))+'<br>Work start '+e(c.started)+' · Submitted '+e(c.submitted)+' · Service provider '+e(c.award)+'</p>':'')+
     rows(heads,lines)+
     (wcr?'<p>Approvals · Service Provider Engineer / Manager · End User (JAFZA/DPW)</p>':''))+
-    '<button class="print">Print / Save PDF</button> <button class="dismiss secondary">Close</button>';
+    '<button class="print">Print / Save PDF</button> '+(quote?'<button class="excel secondary" type="button">Download Excel</button> ':'')+
+    '<button class="dismiss secondary">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
+  if(quote)dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,c.id+'-'+(tenant?'Tenant':'DP-World')+'-Quotation');
   dialog.querySelector('.dismiss').onclick=()=>dialog.close();
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   dialog.showModal();
