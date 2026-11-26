@@ -106,3 +106,11 @@
   .rahati-sheet thead{display:table-header-group}
   .rahati-sheet tr{break-inside:avoid}
 }
+
+.quotation-editor[hidden]{display:none}
+.quotation-editor{border:1px solid #c5ccd6;padding:14px;border-radius:8px}
+.quote-save-status{display:block;margin:6px 0}
+.quote-save-status:empty{display:none}
+.quote-remarks>div,.rahati-remarks>div,.rahati-terms p,.quote-sheet dd{white-space:pre-wrap;overflow-wrap:anywhere}
+.rahati-remarks{margin-top:10px;padding:6px;border:1px solid #91aebb;break-inside:avoid}
+@media print{.quotation-editor,.quote-save-status{display:none!important}}
