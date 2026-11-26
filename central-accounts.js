@@ -4,8 +4,14 @@ const {promisify}=require('node:util');
 const derive=promisify(scrypt);
 const propertiesOf=user=>Array.isArray(user.properties)?user.properties:[];
 const allowedClientCase=(user,c)=>propertiesOf(user).some(scope=>scope.client===c.client&&scope.site===c.site);
-const activeSupplierCase=(user,c)=>Boolean(c.step>=3&&!c.noWork&&
-  (c.award===user.supplier||(!c.award&&user.supplier==='Rahati Bayti')));
+function supplierStage(user,c){
+  if(user.role!=='rahati'||user.supplier!=='Rahati Bayti'||c.noWork)return null;
+  if((c.step===3||c.step===4)&&!c.award&&c.rfq&&!c.bids.some(bid=>bid.supplier===user.supplier))return 'quotation';
+  if(c.award===user.supplier&&c.step===9)return 'reinspection';
+  if(c.award===user.supplier&&c.step===10)return 'engineer-review';
+  return null;
+}
+const activeSupplierCase=(user,c)=>Boolean(supplierStage(user,c));
 
 async function passwordDigest(password,salt=randomBytes(16).toString('hex')){
   const hash=await derive(password,salt,64);
@@ -20,14 +26,14 @@ async function verifyPassword(password,stored){
 function supplierCase(c,user){
   const submitting=c.award===user.supplier;
   return {
-    id:c.id,site:c.site,step:c.step,deadline:c.rfq?.deadline,instructions:c.rfq?.instructions,
+    id:c.id,site:c.site,step:c.step,stage:supplierStage(user,c),deadline:c.rfq?.deadline,instructions:c.rfq?.instructions,
     items:c.snags.map(item=>({
       ref:item.ref,description:item.description,location:item.location,unit:item.unit,qty:item.qty,
       vendorBudget:item.budget,before:item.before,
       ...(submitting?{after:item.after,result:item.result}:{})
     })),
     quotations:c.bids.filter(bid=>bid.supplier===user.supplier).map(bid=>({reference:bid.reference,rates:bid.rates,total:bid.total})),
-    ...(submitting?{workOrder:c.order,wcrReference:c.wcr,supplierReport:c.supplierWcr?{reference:c.supplierWcr.reference,remarks:c.supplierWcr.remarks,lines:c.supplierWcr.lines?.map(line=>({work:line.work}))}:null}:{}),
+    ...(submitting?{workOrder:c.order,wcrReference:c.wcr,reportDraft:c.wcrDraft?{reference:c.wcrDraft.reference,remarks:c.wcrDraft.remarks,signature:{name:c.wcrDraft.signature?.name,image:c.wcrDraft.signature?.image},lines:c.wcrDraft.lines?.map(line=>({work:line.work,after:line.after}))}:null,supplierReport:c.supplierWcr?{reference:c.supplierWcr.reference,remarks:c.supplierWcr.remarks,lines:c.supplierWcr.lines?.map(line=>({work:line.work}))}:null}:{}),
   };
 }
 function clientCase(c){
@@ -46,4 +52,4 @@ function assignedRecords(state,user){
   if(user.role==='client')return state.cases.filter(c=>allowedClientCase(user,c)).map(clientCase);
   return [];
 }
-module.exports={assignedRecords,passwordDigest,verifyPassword};
+module.exports={assignedRecords,passwordDigest,verifyPassword,supplierStage};
