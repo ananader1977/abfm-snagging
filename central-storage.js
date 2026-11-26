@@ -143,6 +143,13 @@ CREATE TABLE IF NOT EXISTS snagging_user (
   enabled boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS snagging_security_audit (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor text NOT NULL,
+  target_user text NOT NULL,
+  action text NOT NULL,
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS snagging_state (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
