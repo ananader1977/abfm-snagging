@@ -86,6 +86,7 @@ async function startOnline(){
   },12000);
 }
 const field = (name,label,type='text',attrs='') => '<label>'+label+'<input name="'+name+'" type="'+type+'" required '+attrs+'></label>';
+const optionalField=(name,label,type='text',attrs='')=>'<label>'+label+'<input name="'+name+'" type="'+type+'" '+attrs+'></label>';
 const options = items => items.map(v=>'<option>'+escape(v)+'</option>').join('');
 const select = (name,label,items) => '<label>'+label+'<select name="'+name+'">'+options(items)+'</select></label>';
 const form = (id, fields, action) => '<form id="'+id+'">'+fields+'<button>'+action+'</button></form>';
@@ -1020,7 +1021,7 @@ function render() {
     '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
     field('ref','ABFM BOQ reference','text','readonly')+'<div id="ratePreview" class="meta"></div>'+field('unit','Unit of measure')+'</div>'+
     '<div id="nonBoqFields" hidden>'+field('customDescription','Non-BOQ work description')+field('customUnit','Unit of measure')+
-    field('customRate','ABFM BOQ Price (AED)','number','min="0.01" max="100000000" step=".01"')+
+    optionalField('customRate','ABFM BOQ Price (AED) · optional during snagging','number','min="0.01" max="100000000" step=".01"')+
     '<p class="meta">Rahati target budget is calculated as 21% below the ABFM BOQ Price.</p></div>'+
     field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
@@ -1033,8 +1034,13 @@ function render() {
       '<div id="rahatiPrintOptions"><label>Rahati quotation format<select name="rahatiTemplate"><option value="detailed">Detailed RFQ and rectification</option><option value="standard">Standard service quotation</option></select></label>'+
       button('previewRahati','Preview Rahati quotation')+'</div>','Record quotation revision');
     panel+=form('vendorReturn',field('quotation','Import a previously issued Rahati quotation','file','accept=".pdf,.json,application/pdf,application/json"'),'Import Rahati quotation');
-    if(c.bids.length)panel+=rows(['Supplier','Reference','Bid total'],c.bids.map(b=>[e(b.supplier),e(b.reference),money(b.total)]))+
-      form('award','<label>Award recommendation<select name="bid">'+c.bids.map((b,i)=>'<option value="'+i+'">'+e(b.supplier+' · '+b.reference)+'</option>').join('')+'</select></label>'+field('reason','Award justification'),'Send to CS approval');
+    if(c.bids.length){
+      const nonBoqPriceFields=c.snags.map((snag,i)=>snag.source==='Non-BOQ'
+        ?field('sell'+i,'ABFM selling price · '+e(snag.ref),'number','min="0.01" max="100000000" step=".01" value="'+(Number.isFinite(snag.rate)?snag.rate:'')+'"')
+        :'').join('');
+      panel+=rows(['Supplier','Reference','Bid total'],c.bids.map(b=>[e(b.supplier),e(b.reference),money(b.total)]))+
+        form('award',nonBoqPriceFields+'<label>Award recommendation<select name="bid">'+c.bids.map((b,i)=>'<option value="'+i+'">'+e(b.supplier+' · '+b.reference)+'</option>').join('')+'</select></label>'+field('reason','Award justification'),'Send to CS approval');
+    }
   }
   if(c.step===5)panel=form('cs',field('approver','CS approver'),'Record CS approval');
   if(c.step===6)panel=form('send',field('submission','Client submission reference'),'Record submission to client');
@@ -1045,14 +1051,17 @@ function render() {
   if(c.step===10)panel=form('verify',field('inspector','Reinspecting ABFM Engineer','text','value="'+e(c.engineer||'')+'"')+
     field('inspectionDate','Date of inspection','date')+field('engineerSign','ABFM Engineer signature (type full name)')+
     '<label>Upload handwritten signature (optional)<input name="engineerSignImage" type="file" accept="image/jpeg,image/png,image/webp"></label>'+c.snags.map((s,i)=>s.result==='Pass'?'':select('result'+i,'Decision · '+e(s.ref),['Pass','Failed','Partial'])).join('')+'<label>Engineer remarks<textarea name="remarks"></textarea></label>','Record verification');
+  const rollbackPanel=c.step>0
+    ?'<details class="admin-rollback"><summary>Admin: return this case to an earlier step</summary><form id="rollback"><label>Target step<select name="targetStep" required>'+steps.slice(0,c.step).map((name,index)=>'<option value="'+index+'">'+e(name)+'</option>').join('')+'</select></label>'+field('reason','Reason for returning the case')+'<button>Return case</button></form></details>'
+    :'';
   $('detail').innerHTML='<article><h1>'+e(c.site)+'</h1><p class="meta">'+e(c.id)+' · '+e(c.client)+' · '+e(c.contact)+'</p>'+(c.quotationReference?'<p class="meta">Quotation reference '+e(c.quotationReference)+'</p>':'')+'<p>'+e(c.request)+'</p><p class="meta">CAFM '+e(c.inspection||'—')+' / '+e(c.reinstatement||'—')+'</p>'+
     '<ol class="steps">'+steps.map((s,i)=>'<li '+(i===c.step?'aria-current="step"':'')+'>'+s+'</li>').join('')+'</ol><h2>'+steps[c.step]+'</h2>'+
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
-    (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':''),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
+    (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(s.source==='Non-BOQ'?(!Number.isFinite(s.rate)?'<br><span class="meta">ABFM selling price can be entered before quotation approval.</span>':''):(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':'')),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
     (c.published||(c.step===1&&c.snags.length)?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
     (c.bids.length?button('quoteSummary','Download quotation summary · Excel')+' ':'')+
-    (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
+    (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+rollbackPanel+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
   if ($('snag')) {
     const fields=$('snag').elements;
@@ -1152,6 +1161,16 @@ function render() {
   if ($('previewRahati')) $('previewRahati').onclick=()=>showRahatiQuotation(c,$('bid'));
   bind('vendorReturn',v=>importRahatiBid(c,v.quotation));
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
+  bind('rollback',v=>{
+    const target=Number(v.targetStep),reason=String(v.reason||'').trim();
+    if(!Number.isInteger(target)||target<0||target>=c.step||!reason)throw Error('Choose an earlier step and enter a reason.');
+    const hasRahatiQuote=c.bids.some(bid=>bid.supplier==='Rahati Bayti');
+    c.step=target;
+    if(target<5){delete c.award;delete c.awardedBid;}
+    if(target<=4&&hasRahatiQuote)c.quoteResubmissionRequested=true;
+    else delete c.quoteResubmissionRequested;
+    log(c,'Administrator returned case to '+steps[target]+' · '+reason);
+  });
   bind('snag',async v=>{
     if(!Number.isFinite(Number(v.qty))||Number(v.qty)<=0)throw Error('Enter a measured quantity greater than zero.');
     let item;
@@ -1159,10 +1178,10 @@ function render() {
       const description=String(v.customDescription||'').trim(),unit=String(v.customUnit||'').trim(),rate=readRate(v.customRate);
       if(!description)throw Error('Enter the non-BOQ work description.');
       if(!unit)throw Error('Enter the unit of measure for this non-BOQ item.');
-      if(!Number.isFinite(rate)||rate<=0)throw Error('Enter a valid ABFM selling rate for this non-BOQ item.');
+      if(rate!==null&&(!Number.isFinite(rate)||rate<=0))throw Error('Enter a valid ABFM selling rate or leave it blank during snagging.');
       const number=c.snags.filter(s=>s.source==='Non-BOQ').length+1;
       item={ref:'NBOQ-'+String(number).padStart(3,'0'),source:'Non-BOQ',description,unit,
-        rate,budget:Math.round(rate*.79*100)/100};
+        rate,budget:null};
     }else{
       const line=catalog.find(x=>x.ref===v.scopeMatch);
       if(!line)throw Error('Select a matching BOQ scope from the search results.');
@@ -1178,10 +1197,7 @@ function render() {
   bind('no-work',()=>{c.published=true;c.noWork=true;log(c,'No reinstatement required');move(c,11);});
   bind('rfq',v=>{
     for(const snag of c.snags){
-      if(snag.source==='Non-BOQ'){
-        if(!Number.isFinite(snag.budget)||!Number.isFinite(snag.rate))throw Error(snag.ref+' needs a valid ABFM selling price before RFQ.');
-        continue;
-      }
+      if(snag.source==='Non-BOQ')continue;
       if(Number.isFinite(snag.budget)&&Number.isFinite(snag.rate))continue;
       const line=catalog.find(item=>item.ref===snag.ref);
       if(!Number.isFinite(snag.budget))snag.budget=line?.budget??null;
@@ -1193,6 +1209,11 @@ function render() {
   });
   bind('bid',v=>recordBid(c,v.supplier,v.reference,c.snags.map((_,i)=>readRate(v['rate'+i]))));
   bind('award',v=>{
+    for(const [i,snag] of c.snags.entries())if(snag.source==='Non-BOQ'){
+      const entered=readRate(v['sell'+i]);
+      if(entered!==null)snag.rate=entered;
+      if(!Number.isFinite(snag.rate)||snag.rate<=0)throw Error('Enter an ABFM selling price for '+snag.ref+' before sending the quotation for CS approval.');
+    }
     const index=Number(v.bid), bid=c.bids[index];
     if(!quotationAllowed(c,bid))throw Error(priceGateMessage);
     c.award=bid.supplier;
