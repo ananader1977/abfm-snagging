@@ -8,7 +8,7 @@ function supplierNoticeTarget(caseRecord) {
   const centsTotal=caseRecord.snags.reduce((sum,line)=>sum+cents(line.rate*line.qty),0);
   if(!caseRecord.snags.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty))||
     !Number.isSafeInteger(centsTotal)||centsTotal<=0)return null;
-  return Number(BigInt(centsTotal)*100n/121n)/100;
+  return Math.round(centsTotal*0.79)/100;
 }
 function applySupplierAction(c,user,body,now=new Date()) {
   const stage=supplierStage(user,c);
@@ -23,7 +23,8 @@ function applySupplierAction(c,user,body,now=new Date()) {
     const details=Object.fromEntries(['detailed','standard'].filter(format=>body.details?.[format]).map(format=>[
       format,Object.fromEntries(keys.filter(key=>typeof body.details[format][key]==='string').map(key=>[key,inputText(body.details[format][key],2000)]))
     ]));
-    c.bids.push({supplier:user.supplier,reference,rates,total,details});
+    const template=body.template==='standard'?'standard':'detailed';
+    c.bids.push({supplier:user.supplier,reference,rates,total,details,template});
     c.step=4;
     append('Quotation '+reference+' from '+user.supplier);
     return;
