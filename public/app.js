@@ -897,6 +897,7 @@ function report(c,type) {
     dialog.classList.add('quotation-dialog');
     dialog.setAttribute('aria-labelledby','quote-title');
   }
+  if(wcr)dialog.classList.add('work-completion-dialog');
   dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : wcr ? workCompletionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     rows(heads,lines))+
     (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
