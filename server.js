@@ -3,6 +3,11 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const appIcons = require('./pwa-icons');
+const {Pool}=require('pg');
+const {CentralStorage,StorageError}=require('./central-storage');
+if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for centralized storage.');
+const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000});
+const storage=new CentralStorage(pool);
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 
 const username = process.env.SNAGGING_USERNAME || 'abfm-admin';
@@ -61,12 +66,45 @@ const routes = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']]
 ]);
+function respondJson(res,status,data){
+  res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
+  res.end(JSON.stringify(data));
+}
+async function stateApi(req,res,pathname,signedIn){
+  if(!signedIn)return respondJson(res,401,{error:'Sign in again to access saved records.'});
+  if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':null;
+  if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
+  if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
+    req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
+    return respondJson(res,403,{error:'Submit the request from the signed-in application.'});
+  }
+  let length=0;
+  const chunks=[];
+  for await (const chunk of req){
+    length+=chunk.length;
+    if(length>32*1024*1024){respondJson(res,413,{error:'This batch is too large. Import fewer records at a time.'});return;}
+    chunks.push(chunk);
+  }
+  let payload;
+  try{payload=JSON.parse(Buffer.concat(chunks).toString());}
+  catch{return respondJson(res,400,{error:'Invalid save payload.'});}
+  if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
+  return respondJson(res,200,await storage.write(payload.revision,payload.state,username,mode));
+}
 const server = http.createServer((req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   const pathname = req.url.split('?')[0];
   const token = /(?:^|;\s*)snagging_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
   const signedIn = (sessions.get(token) || 0) > Date.now();
+  if(pathname.startsWith('/api/')){
+    return stateApi(req,res,pathname,signedIn).catch(error=>{
+      if(error instanceof StorageError)return respondJson(res,error.status,{error:error.message});
+      console.error('Central storage operation failed',error.code||error.name);
+      return respondJson(res,503,{error:'The server could not save or load the records. Your change was not confirmed. Please retry.'});
+    });
+  }
   if (req.method === 'POST' && (pathname === '/login' || pathname === '/logout')) {
     if (req.headers['sec-fetch-site'] === 'cross-site') {
       res.writeHead(403);
@@ -108,4 +146,9 @@ const server = http.createServer((req, res) => {
 });
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
-server.listen(port, host, () => console.log('ABFM Snagging server listening on port ' + server.address().port));
+storage.initialize().then(()=>{
+  server.listen(port,host,()=>console.log('ABFM Snagging server listening on port '+server.address().port));
+}).catch(error=>{
+  console.error('Unable to initialize PostgreSQL storage',error.code||error.name);
+  pool.end().finally(()=>{process.exitCode=1;});
+});
