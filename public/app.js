@@ -277,7 +277,7 @@ function recordBid(c, supplier, reference, rates) {
 
 function dpwQuotationWorkbookData(c,tenant=false){
   const fields=quotationFields(c,tenant),count=tenant?4:8,rows=[],styleCells={};
-  const merged=tenant?['B5:D5','A8:B10','C8:D13']:['C1:D1','C2:D2','C3:D3','C5:H5','A8:C10','A13:C14'];
+  const merged=tenant?['B5:D5','A8:B10','A12:B13']:['C1:D1','C2:D2','C3:D3','C5:H5','A8:C10','A13:C14'];
   const put=(row,col,value,style)=>{
     rows[row-1]??=Array(count).fill('');
     rows[row-1][col-1]=value;
@@ -373,12 +373,14 @@ function quoteWorkbookData(sheet) {
       append(values,header||/^(?:Grand Total|Total Including VAT)/.test(String(values[0])));
     }
   }
-  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks,.quote-signatures'))append([node.innerText.trim()]);
+  for(const node of sheet.querySelectorAll('.quote-remarks,.rahati-terms > div,.rahati-remarks'))append([node.innerText.trim()]);
+  for(const block of sheet.querySelectorAll('.quote-signatures > div'))append([block.innerText.trim()]);
   if(rahati){
     const logo=sheet.querySelector('.rahati-heading img')?.getAttribute('src');
     if(/^data:image\/(?:jpeg|png);base64,/.test(logo||''))pictures.push({row:0,column:0,source:logo});
     lines.unshift([]);
-    for(const row of classNames.values())classNames.delete(row);
+    const shifted=new Set([...classNames].map(row=>row+1));
+    classNames.clear();shifted.forEach(row=>classNames.add(row));
   }
   return {lines,classNames,pictures,...(rahati?{template:'rahati',width:[8,34,24,12,14,16,18,18]}:{})};
 }
