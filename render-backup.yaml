@@ -11,13 +11,7 @@ services:
         fromDatabase:
           name: abfm-snagging-production
           property: connectionString
-      - key: BACKUP_BUCKET
-        sync: false
-      - key: BACKUP_EXPECTED_OWNER
-        sync: false
-      - key: AWS_DEFAULT_REGION
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
+      - key: BACKUP_DATABASE_URL
+        fromDatabase:
+          name: abfm-snagging-backups
+          property: connectionString
