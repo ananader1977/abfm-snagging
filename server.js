@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const appIcons = require('./pwa-icons');
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 
 const username = process.env.SNAGGING_USERNAME || 'abfm-admin';
@@ -26,7 +27,7 @@ function sessionCookie(req, token, maxAge) {
 
 function signIn(res, invalid = false) {
   res.writeHead(invalid ? 401 : 200, {'Content-Type':'text/html; charset=utf-8'});
-  res.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in | ABFM Snagging</title><link rel="stylesheet" href="/style.css"><main class="sign-in"><article><h1>ABFM Snagging</h1>'+
+  res.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in | ABFM Snagging</title><meta name="theme-color" content="#313342"><link rel="manifest" href="/app.webmanifest"><link rel="apple-touch-icon" href="/app-icon-192.png"><link rel="icon" href="/app-icon-192.png"><link rel="stylesheet" href="/style.css"><main class="sign-in"><article><h1>ABFM Snagging</h1>'+
     (invalid ? '<p class="error" role="alert">Incorrect username or password.</p>' : '')+
     '<form method="post" action="/login"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form></article></main></html>');
 }
@@ -56,6 +57,7 @@ const routes = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
+  ['/app.webmanifest', ['app.webmanifest', 'application/manifest+json; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']]
 ]);
@@ -80,7 +82,12 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
   if (pathname === '/login') return signIn(res);
-  if (!signedIn && pathname !== '/style.css') {
+  const icon=appIcons.get(pathname);
+  if(icon){
+    res.writeHead(200,{'Content-Type':'image/png'});
+    return res.end(req.method==='HEAD'?undefined:icon);
+  }
+  if (!signedIn && pathname !== '/style.css' && pathname !== '/app.webmanifest') {
     res.writeHead(303, {Location:'/login'});
     return res.end();
   }
