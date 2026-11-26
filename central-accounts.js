@@ -7,6 +7,7 @@ const allowedClientCase=(user,c)=>propertiesOf(user).some(scope=>scope.client===
 function supplierStage(user,c){
   if(user.role!=='rahati'||user.supplier!=='Rahati Bayti'||c.noWork)return null;
   const hasQuote=c.bids.some(bid=>bid.supplier===user.supplier);
+  if((c.step===3||c.step===4)&&c.quoteResubmissionRequested&&!c.award&&c.rfq)return 'quotation';
   if((c.step===3||c.step===4)&&!hasQuote&&!c.award&&c.rfq)return 'quotation';
   if(c.step===4&&hasQuote&&!c.award)return 'quotation-submitted';
   if(c.award!==user.supplier)return null;
