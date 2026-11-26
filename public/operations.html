@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Operations · ABFM Snagging</title>
+  <meta name="theme-color" content="#313342">
+  <link rel="manifest" href="/app.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/brand.js"></script>
+  <script defer src="/operations.js"></script>
+</head>
+<body>
+  <header>
+    <img id="abfm" alt="Al Bonian FM">
+    <div><strong>Al Bonian FM</strong><small>Operations · Snagging approval</small></div>
+    <form class="logout" method="post" action="/logout"><button type="submit">Log out</button></form>
+  </header>
+  <main>
+    <aside>
+      <h2>Quotation approvals</h2>
+      <p id="syncStatus" class="meta" role="status">Loading online records…</p>
+      <button id="refresh" class="secondary" type="button">Refresh live records</button>
+      <div id="cases"></div>
+    </aside>
+    <section id="detail"><article><h1>Loading</h1></article></section>
+  </main>
+</body>
+</html>
