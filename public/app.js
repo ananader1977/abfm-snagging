@@ -28,21 +28,61 @@ function bind(id, handler) {
   const element=$(id);
   if (!element) return;
   const event=element.tagName==='FORM'?'submit':'click';
+  let saving = false;
   element.addEventListener(event, async ev=>{
     ev.preventDefault();
-    const snapshot = JSON.stringify(cases);
+    if(saving)return;
+    saving=true;
+    const originalCases=cases.slice();
+    const snapshot=JSON.parse(JSON.stringify(cases));
     const previousSelection=selected;
+    const control=event==='submit'?element.querySelector('button[type="submit"],button:not([type])'):element;
+    if(control)control.disabled=true;
     try { await handler(event==='submit'?Object.fromEntries(new FormData(element)):{}); save(); }
-    catch(error) { cases=JSON.parse(snapshot); selected=previousSelection; $('error').textContent=error.message; }
+    catch(error) {
+      cases=originalCases.map((original,i)=>{
+        for(const key of Object.keys(original))delete original[key];
+        return Object.assign(original,snapshot[i]);
+      });
+      selected=previousSelection;
+      const alert=$('error');
+      alert.textContent=error.name==='QuotaExceededError'?'Browser storage is full. Free space or use fewer photos before saving.':error.message;
+      alert.scrollIntoView?.({block:'nearest'});
+    }
+    finally { saving=false; if(control)control.disabled=false; }
   });
 }
-const readPhoto = file => new Promise((resolve,reject) => {
-  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 500000) return reject(Error('Choose a JPEG, PNG or WebP up to 500 KB.'));
+const readDataUrl = file => new Promise((resolve,reject) => {
   const reader=new FileReader();
   reader.onload=()=>resolve(reader.result);
   reader.onerror=()=>reject(Error('Unable to read the photo.'));
   reader.readAsDataURL(file);
 });
+async function readPhoto(file) {
+  if(!file?.size)throw Error('Attach a before or after photo as requested.');
+  const supported=/^image\/(jpeg|png|webp)$/i.test(file.type) || (!file.type && /\.(jpe?g|png|webp)$/i.test(file.name));
+  if(!supported)throw Error('Choose a JPEG, PNG or WebP photo.');
+  if(file.size<=500000)return readDataUrl(file);
+  if(file.size>25000000)throw Error('Choose a photo smaller than 25 MB.');
+  const data=await readDataUrl(file);
+  const image=new Image();
+  image.src=data;
+  try { await image.decode(); }
+  catch { throw Error('This photo could not be opened. Choose another JPEG, PNG or WebP.'); }
+  const canvas=document.createElement('canvas');
+  const scale=Math.min(1,1440/Math.max(image.naturalWidth,image.naturalHeight));
+  canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+  const context=canvas.getContext('2d');
+  context.fillStyle='#fff';
+  context.fillRect(0,0,canvas.width,canvas.height);
+  context.drawImage(image,0,0,canvas.width,canvas.height);
+  for(const quality of [.78,.6,.4]){
+    const encoded=canvas.toDataURL('image/jpeg',quality);
+    if(encoded.length<=667000)return encoded;
+  }
+  throw Error('This photo could not be compressed. Choose a smaller image.');
+}
 const photo = (src,label) => src ? '<figure><img src="'+e(src)+'" alt="'+label+'"><figcaption>'+label+'</figcaption></figure>' : '';
 const upload = (name,label) => field(name,label,'file','accept="image/jpeg,image/png,image/webp"');
 const rows = (head,data) => '<div class="wide"><table><thead><tr>'+head.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+data.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
@@ -334,7 +374,7 @@ function render() {
     '<ol class="steps">'+steps.map((s,i)=>'<li '+(i===c.step?'aria-current="step"':'')+'>'+s+'</li>').join('')+'</ol><h2>'+steps[c.step]+'</h2>'+
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
-    (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
+    (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':''),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
     (c.published?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
     (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
@@ -389,15 +429,25 @@ function render() {
   bind('snag',async v=>{
     const line=catalog.find(x=>x.ref===v.scopeMatch);
     if(!line)throw Error('Select a matching scope from the search results.');
-    if(!Number.isFinite(line.budget)||!Number.isFinite(line.rate))throw Error('This BOQ item needs a single numeric Vendor Budget and ABFM BOQ Price. Correct the source workbook and reimport it.');
     const unit=line.unit||v.unit.trim();
     if(!unit)throw Error('Enter the unit of measure for this BOQ scope.');
+    if(!Number.isFinite(Number(v.qty))||Number(v.qty)<=0)throw Error('Enter a measured quantity greater than zero.');
     c.snags.push({...line,unit,location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
     log(c,'Engineer confirmed '+line.ref);
   });
   bind('confirm',()=>{c.published=true;move(c,2);});
   bind('no-work',()=>{c.published=true;c.noWork=true;log(c,'No reinstatement required');move(c,11);});
-  bind('rfq',v=>{c.rfq=v;move(c,3);});
+  bind('rfq',v=>{
+    for(const snag of c.snags){
+      if(Number.isFinite(snag.budget)&&Number.isFinite(snag.rate))continue;
+      const line=catalog.find(item=>item.ref===snag.ref);
+      if(!Number.isFinite(snag.budget))snag.budget=line?.budget??null;
+      if(!Number.isFinite(snag.rate))snag.rate=line?.rate??null;
+      if(!Number.isFinite(snag.budget)||!Number.isFinite(snag.rate))throw Error(snag.ref+' needs a numeric Vendor Budget and ABFM BOQ Price before RFQ. Correct the workbook and reimport it.');
+    }
+    c.rfq=v;
+    move(c,3);
+  });
   bind('bid',v=>recordBid(c,v.supplier,v.reference,c.snags.map((s,i)=>readRate(v['rate'+i]))));
   bind('award',v=>{
     const index=Number(v.bid), bid=c.bids[index];
