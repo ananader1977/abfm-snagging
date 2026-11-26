@@ -1,7 +1,8 @@
 'use strict';
 
 let supplierState={revision:null,records:[]};
-let openCase;
+let openCase,supplierFormEdited=false;
+document.addEventListener('input',event=>{if(event.target.closest('form'))supplierFormEdited=true;});
 const showError=message=>{
   const target=$('supplierError');
   if(target)target.textContent=message;
@@ -12,6 +13,7 @@ async function loadAssigned(message=''){
   const result=await response.json();
   if(!response.ok)throw Error(result.error);
   supplierState=result;
+  supplierFormEdited=false;
   if(!result.records.some(record=>record.id===openCase))openCase=result.records[0]?.id;
   renderAssigned(message);
 }
@@ -212,3 +214,4 @@ loadAssigned().catch(error=>{
   $('supplierDetail').innerHTML='<article><p id="supplierError" class="error" role="alert"></p></article>';
   showError(error.message);
 });
+setInterval(()=>{if(!document.hidden&&!supplierFormEdited&&!document.querySelector('dialog[open]'))loadAssigned().catch(error=>showError(error.message));},15000);
