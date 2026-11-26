@@ -267,6 +267,45 @@ function recordBid(c, supplier, reference, rates) {
 }
 
 
+function dpwQuotationWorkbookData(c){
+  const fields=quotationFields(c,false),rows=[],styleCells={},merged=['C1:D1','C2:D2','C3:D3','C5:H5','A8:C10','A13:C14'];
+  const put=(row,col,value,style)=>{rows[row-1]??=Array(8).fill('');rows[row-1][col-1]=value;if(style)styleCells[String.fromCharCode(64+col)+row]=style;};
+  const label=(cell,text)=>{const m=cell.match(/^([A-H])(\d+)$/);put(Number(m[2]),m[1].charCodeAt(0)-64,text,3);};
+  const value=(cell,text)=>{const m=cell.match(/^([A-H])(\d+)$/);put(Number(m[2]),m[1].charCodeAt(0)-64,text||'',4);};
+  const left=(row,name,val)=>{label('A'+row,name);value('C'+row,val);};
+  const right=(row,name,val)=>{label('G'+row,name);value('H'+row,val);};
+  left(1,'Client Name:',fields.client);right(1,'Ref. No.',fields.reference);
+  left(2,'Property Name:',fields.property);right(2,'Date',fields.date.split('-').reverse().join('/'));
+  left(3,'Contact Person:',fields.contact);right(3,'Task ID.',fields.task);
+  left(4,'Works Location:',fields.location);
+  label('A5','Subject:');value('C5',fields.subject);
+  label('A7','Works Requirement:');right(7,'Quotation Validity:',fields.validity);
+  value('A8',fields.requirement);
+  label('A12','Additional Information:');right(8,'Materials Delivery Period:',fields.delivery);
+  right(9,'Works Completion Period:',fields.completion);
+  right(10,'Warranty (as applicable):',fields.warranty);
+  right(11,'Urgency of Works:',fields.urgency);right(12,'Payment Terms:',fields.payment);
+  value('A13',fields.additional);
+  const headerRow=15,headers=['SN','BOQ Ref Number','Description','Unit','Qty','Unit Price','SubTotal','Total'];
+  rows[headerRow-1]=headers;for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+headerRow]=1;
+  c.snags.forEach((snag,index)=>{
+    const row=headerRow+index+1,subtotal=Math.round(amount(snag.rate,snag.qty)*100)/100;
+    rows[row-1]=[index+1,snag.ref,snag.description,snag.unit,snag.qty,snag.rate,subtotal,subtotal];
+    for(let col=1;col<=8;col++)styleCells[String.fromCharCode(64+col)+row]=col===1||col===5||col>=6?2:4;
+  });
+  const firstTotal=headerRow+c.snags.length+1;
+  const subtotal=total(c),vat=amount(subtotal,.05);
+  const totals=[['Total Value',subtotal],['Discount (if applicable)',0],['Total after Discount',subtotal],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',subtotal+vat]];
+  totals.forEach(([name,number],offset)=>{
+    const row=firstTotal+offset;rows[row-1]=[name,'','','','','','',number];
+    styleCells['A'+row]=offset===4?5:3;styleCells['H'+row]=offset===4?6:2;
+  });
+  const remarks=firstTotal+totals.length+1;
+  label('A'+remarks,'Remarks:');value('A'+(remarks+1),fields.remarks);
+  for(let col=1;col<=8;col++){styleCells[String.fromCharCode(64+col)+remarks]=3;styleCells[String.fromCharCode(64+col)+(remarks+1)]=4;}
+  merged.push('A'+(remarks+1)+':H'+(remarks+1));
+  return {template:'dpw',lines:rows.map(row=>row||Array(8).fill('')),width:[3.71,8.14,40.57,5.57,4.29,21.57,9.71,29.14],merged,styleCells,remarksRow:remarks};
+}
 function quoteWorkbookData(sheet) {
   const heading=sheet.querySelector('h2').textContent.trim();
   const lines=[[heading]];
@@ -433,8 +472,9 @@ function rahatiQuotationFields(c,reference,template) {
     ...c.rahatiQuotationDetails?.[template],reference
   };
 }
-function downloadQuotationExcel(dialog,filename) {
-  downloadExcelFile(quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet')),filename);
+function downloadQuotationExcel(dialog,filename,c,tenant) {
+  const data=c&&!tenant?dpwQuotationWorkbookData(c):quoteWorkbookData(dialog.querySelector('.rahati-sheet,.quote-sheet'));
+  downloadExcelFile(data,filename);
 }
 function quotationSummaryData(c) {
   const awarded=c.bids[c.awardedBid];
@@ -854,7 +894,7 @@ function report(c,type) {
   dialog.querySelector('.print').onclick=()=>window.print();
   if(inspection)attachInspectionEditor(dialog,c);
   if(quote){
-    dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,quotationFields(c,tenant).reference+'-'+(tenant?'Tenant':'DP-World')+'-Quotation');
+    dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,quotationFields(c,tenant).reference+'-'+(tenant?'Tenant':'DP-World')+'-Quotation',c,tenant);
     if(c.step<7)attachQuotationEditor(dialog,c,tenant);
   }
   dialog.querySelector('.dismiss').onclick=()=>dialog.close();
