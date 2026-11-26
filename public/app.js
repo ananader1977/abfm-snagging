@@ -654,6 +654,7 @@ function render() {
     const budgets=c.snags.map(s=>vendorBudget(s,catalog));
     const drafts=new Map();
     let supplier=fields.supplier.value;
+    const latestBid=name=>c.bids.findLast(bid=>bid.supplier===name);
     const updateTargetNotice=()=>{
       const notice=$('rahatiTargetNotice');
       notice.hidden=supplier!=='Rahati Bayti';
@@ -665,17 +666,23 @@ function render() {
     const loadRates=()=>{
       const rahati=supplier==='Rahati Bayti';
       $('rahatiPrintOptions').hidden=!rahati;
-      const saved=drafts.get(supplier);
-      inputs.forEach((input,i)=>{input.value=saved?.[i]??(rahati?budgets[i]??'':'');});
+      const saved=latestBid(supplier);
+      const draft=drafts.get(supplier);
+      fields.reference.value=draft?.reference??saved?.reference??'';
+      inputs.forEach((input,i)=>{
+        input.value=draft?.rates[i]??saved?.rates[i]??(rahati?budgets[i]??'':'');
+      });
       const missing=budgets.filter(rate=>rate===null).length;
-      $('bidBudgetStatus').textContent=rahati
-        ? 'Rates start from Vendor Budget and can be edited.'+(missing?' '+missing+' line(s) have no single usable Vendor Budget. Check the workbook.':'')
-        : 'Enter the rates quoted by '+supplier+'.';
+      $('bidBudgetStatus').textContent=saved
+        ? 'Saved quotation '+saved.reference+' · '+money(saved.total)+' before VAT. Edit the rates to record a new revision.'
+        : rahati
+          ? 'Rates start from Vendor Budget and can be edited.'+(missing?' '+missing+' line(s) have no single usable Vendor Budget. Check the workbook.':'')
+          : 'Enter the rates quoted by '+supplier+'.';
       updateTargetNotice();
     };
     inputs.forEach(input=>input.addEventListener('input',updateTargetNotice));
     fields.supplier.onchange=()=>{
-      drafts.set(supplier,inputs.map(input=>input.value));
+      drafts.set(supplier,{reference:fields.reference.value,rates:inputs.map(input=>input.value)});
       supplier=fields.supplier.value;
       loadRates();
     };
