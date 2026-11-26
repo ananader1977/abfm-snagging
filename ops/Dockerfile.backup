@@ -1,0 +1,12 @@
+FROM node:22-bookworm AS dependencies
+WORKDIR /backup
+COPY package.json ./
+RUN npm install --omit=dev
+
+FROM postgres:17-bookworm
+WORKDIR /backup
+COPY --from=dependencies /usr/local/bin/node /usr/local/bin/node
+COPY --from=dependencies /backup/node_modules ./node_modules
+COPY ops/render-backup.js ./ops/render-backup.js
+USER postgres
+CMD ["node","ops/render-backup.js"]

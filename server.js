@@ -3,6 +3,18 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const appIcons = require('./pwa-icons');
+const {Pool}=require('pg');
+const {CentralStorage,StorageError}=require('./central-storage');
+const {assignedRecords,passwordDigest,verifyPassword}=require('./central-accounts');
+const {applySupplierAction,supplierNoticeTarget}=require('./supplier-workflow');
+if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for centralized storage.');
+const staging=process.env.SNAGGING_STAGE==='true';
+const testSchema=process.env.SNAGGING_TEST_SCHEMA;
+if(testSchema&&(!staging||!/^snagging_test_[a-f0-9]{16}$/.test(testSchema)))throw new Error('Invalid isolated staging schema.');
+const schema=testSchema||'snagging_stage';
+const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000,
+  ...(staging?{options:'-c search_path='+schema}:{})});
+const storage=new CentralStorage(pool);
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 
 const username = process.env.SNAGGING_USERNAME || 'abfm-admin';
@@ -16,7 +28,7 @@ const expectedPassword = hash(password);
 const sessions = new Map();
 const sessionSeconds = 8 * 60 * 60;
 const cleanup = setInterval(() => {
-  for (const [token, expiry] of sessions) if (expiry <= Date.now()) sessions.delete(token);
+  for (const [token, session] of sessions) if (session.expiry <= Date.now()) sessions.delete(token);
 }, 60_000);
 cleanup.unref();
 
@@ -47,9 +59,17 @@ async function login(req, res) {
   const form = new URLSearchParams(Buffer.concat(chunks).toString());
   const userMatches = timingSafeEqual(hash(form.get('username') || ''), expectedUser);
   const passwordMatches = timingSafeEqual(hash(form.get('password') || ''), expectedPassword);
-  if (!userMatches || !passwordMatches) return signIn(res, true);
+  let identity;
+  if(userMatches){
+    if(!passwordMatches)return signIn(res,true);
+    identity={username,role:'abfm',legacy:true};
+  }else{
+    const {rows:[account]}=await pool.query('SELECT username,role,password_digest FROM snagging_user WHERE username=$1 AND enabled',[form.get('username')]);
+    if(!account||account.role==='client'||!await verifyPassword(form.get('password')||'',account.password_digest))return signIn(res,true);
+    identity={username:account.username,role:account.role,legacy:false};
+  }
   const token = randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + sessionSeconds * 1000);
+  sessions.set(token,{...identity,expiry:Date.now()+sessionSeconds*1000});
   res.writeHead(303, {Location:'/', 'Set-Cookie':sessionCookie(req, token, sessionSeconds)});
   res.end();
 }
@@ -59,14 +79,98 @@ const routes = new Map([
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/app.webmanifest', ['app.webmanifest', 'application/manifest+json; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
-  ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']]
+  ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']],
+  ['/supplier', ['supplier.html','text/html; charset=utf-8']],
+  ['/supplier.js', ['supplier.js','text/javascript; charset=utf-8']]
 ]);
+function respondJson(res,status,data){
+  res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
+  res.end(JSON.stringify(data));
+}
+async function stateApi(req,res,pathname,session){
+  if(!session)return respondJson(res,401,{error:'Sign in again to access saved records.'});
+  let identity=session;
+  if(!session.legacy){
+    const {rows:[account]}=await pool.query('SELECT username,role,supplier,properties FROM snagging_user WHERE username=$1 AND enabled',[session.username]);
+    if(!account||account.role==='client')return respondJson(res,403,{error:'This account is disabled.'});
+    identity=account;
+  }
+  if(req.method==='GET'&&pathname==='/api/assigned'){
+    if(identity.role==='abfm')return respondJson(res,403,{error:'Use the ABFM case workspace.'});
+    const {revision,state}=await storage.get();
+    const records=assignedRecords(state,identity).map(record=>({
+      ...record,...(record.stage==='quotation'?{targetBudget:supplierNoticeTarget(state.cases.find(c=>c.id===record.id))}:{})
+    }));
+    return respondJson(res,200,{revision,records});
+  }
+  const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
+  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
+  if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
+  if(req.method==='GET'&&pathname==='/api/export'){
+    res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
+    return respondJson(res,200,await storage.get());
+  }
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':null;
+  if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
+  if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
+    req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
+    return respondJson(res,403,{error:'Submit the request from the signed-in application.'});
+  }
+  let length=0;
+  const chunks=[];
+  for await (const chunk of req){
+    length+=chunk.length;
+    if(length>32*1024*1024){respondJson(res,413,{error:'This batch is too large. Import fewer records at a time.'});return;}
+    chunks.push(chunk);
+  }
+  let payload;
+  try{payload=JSON.parse(Buffer.concat(chunks).toString());}
+  catch{return respondJson(res,400,{error:'Invalid save payload.'});}
+  if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
+  if(mode==='account'){
+    if(typeof payload.password!=='string'||payload.password.length<16||payload.password.length>256)return respondJson(res,400,{error:'Use a unique password of 16 to 256 characters.'});
+    const account='rahati-bayti';
+    if(username===account)return respondJson(res,409,{error:'The ABFM username cannot be used for Rahati.'});
+    const digest=await passwordDigest(payload.password);
+    const result=await pool.query(`
+      WITH change AS (
+        INSERT INTO snagging_user(username,password_digest,role,supplier) VALUES($1,$2,'rahati','Rahati Bayti')
+        ON CONFLICT(username) DO UPDATE SET password_digest=EXCLUDED.password_digest, enabled=true
+        WHERE snagging_user.role='rahati' RETURNING username
+      )
+      INSERT INTO snagging_security_audit(actor,target_user,action)
+      SELECT $3,username,'Rahati account password configured' FROM change
+    `,[account,digest,identity.username]);
+    if(!result.rowCount)return respondJson(res,409,{error:'That username is assigned to another role.'});
+    for(const [key,value] of sessions)if(value.username===account)sessions.delete(key);
+    return respondJson(res,200,{username:account});
+  }
+  if(mode==='supplier'){
+    if(identity.role!=='rahati')return respondJson(res,403,{error:'Only the assigned supplier can submit this action.'});
+    const {revision,state}=await storage.get();
+    if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before submitting.'});
+    const record=state.cases.find(c=>c.id===payload.caseId);
+    if(!record)return respondJson(res,404,{error:'Assigned case not found.'});
+    applySupplierAction(record,identity,payload);
+    await storage.write(revision,state,identity.username,mode);
+    return respondJson(res,200,{saved:true});
+  }
+  return respondJson(res,200,await storage.write(payload.revision,payload.state,identity.username,mode));
+}
 const server = http.createServer((req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   const pathname = req.url.split('?')[0];
   const token = /(?:^|;\s*)snagging_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
-  const signedIn = (sessions.get(token) || 0) > Date.now();
+  const storedSession=sessions.get(token);
+  const session=storedSession?.expiry>Date.now()?storedSession:null;
+  if(pathname.startsWith('/api/')){
+    return stateApi(req,res,pathname,session).catch(error=>{
+      if(error instanceof StorageError)return respondJson(res,error.status,{error:error.message});
+      console.error('Central storage operation failed',error.code||error.name);
+      return respondJson(res,503,{error:'The server could not save or load the records. Your change was not confirmed. Please retry.'});
+    });
+  }
   if (req.method === 'POST' && (pathname === '/login' || pathname === '/logout')) {
     if (req.headers['sec-fetch-site'] === 'cross-site') {
       res.writeHead(403);
@@ -87,9 +191,19 @@ const server = http.createServer((req, res) => {
     res.writeHead(200,{'Content-Type':'image/png'});
     return res.end(req.method==='HEAD'?undefined:icon);
   }
-  if (!signedIn && pathname !== '/style.css' && pathname !== '/app.webmanifest') {
+  if (!session && pathname !== '/style.css' && pathname !== '/app.webmanifest') {
     res.writeHead(303, {Location:'/login'});
     return res.end();
+  }
+  if(session&&session.role!=='abfm'){
+    if(pathname==='/'||pathname==='/index.html'){
+      res.writeHead(303,{Location:'/supplier'});
+      return res.end();
+    }
+    if(!['/supplier','/supplier.js','/app.js','/brand.js','/style.css','/app.webmanifest'].includes(pathname)){
+      res.writeHead(403);
+      return res.end('This page is restricted to ABFM accounts.');
+    }
   }
   const asset = routes.get(pathname);
   if (!asset) {
@@ -107,5 +221,13 @@ const server = http.createServer((req, res) => {
   });
 });
 const host = process.env.HOST || '127.0.0.1';
-const port = Number(process.env.PORT || 3000);
-server.listen(port, host, () => console.log('ABFM Snagging server listening on port ' + server.address().port));
+const port = Number(process.env.PORT ?? 3000);
+(async()=>{
+  if(staging)await pool.query('CREATE SCHEMA IF NOT EXISTS '+schema);
+  await storage.initialize();
+})().then(()=>{
+  server.listen(port,host,()=>console.log('ABFM Snagging server listening on port '+server.address().port));
+}).catch(error=>{
+  console.error('Unable to initialize PostgreSQL storage',error.code||error.name);
+  pool.end().finally(()=>{process.exitCode=1;});
+});
