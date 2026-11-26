@@ -776,7 +776,7 @@ function quotationDocument(c,tenant) {
   }).join('');
   const totals=[['Total Value',value],['Discount (if applicable)',0],['Total after Discount',value],['5% Value Added Tax (VAT)',vat],['Grand Total, inclusive of VAT',value+vat]];
   return '<section class="quote-sheet '+(tenant?'quote-tenant':'quote-client')+'">'+
-    '<div class="quote-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2 id="quote-title">'+title+'</h2></div>'+
+    '<div class="quote-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"></div>'+
     '<div class="quote-meta"><dl>'+row('Client Name:',details.client)+row('Property Name:',details.property)+
     (tenant?'':row('Contact Person:',details.contact))+row('Works Location:',details.location)+'</dl>'+
     '<dl>'+row('Ref. No.',details.reference)+row('Date',date)+row('Task ID.',details.task)+'</dl></div>'+
@@ -861,8 +861,7 @@ function workCompletionReport(c){
   const reportDate=verification.date?.split('-').reverse().join('/')||c.submitted||'';
   const sign=(value,label)=>'<div class="client-wcr-sign"><strong>'+label+'</strong><div class="client-wcr-sign-line">'+(value?.image?'<img src="'+e(value.image)+'" alt="'+label+' signature">':'')+'</div><div>Name: '+e(value?.name||'')+'</div><div>Date: '+e(label.includes('Engineer')?reportDate:(c.submitted||''))+'</div></div>';
   const work=c.snags.map((line,i)=>'<section class="client-wcr-item"><strong>'+e(line.ref||String(i+1))+'. '+e(line.description)+'</strong>'+
-    '<div class="client-wcr-photos"><figure>'+photo(line.before,'Before Photo')+'<figcaption>Before Photo</figcaption></figure>'+
-    '<figure>'+photo(line.after,'After Photo')+'<figcaption>After Photo</figcaption></figure></div>'+
+    '<div class="client-wcr-photos">'+photo(line.before,'Before Photo')+photo(line.after,'After Photo')+'</div>'+
     (c.supplierWcr?.lines?.[i]?.work?'<p>'+e(c.supplierWcr.lines[i].work)+'</p>':'')+'</section>').join('');
   const logo=globalThis.brand?.abfm||'abfm.jpg';
   return '<section class="client-wcr-sheet"><header class="client-wcr-heading"><img src="'+e(logo)+'" alt="Al Bonian FM"><h2>WORK COMPLETION REPORT</h2></header>'+
