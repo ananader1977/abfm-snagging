@@ -68,3 +68,5 @@
 }
 
 .quote-heading{display:grid;grid-template-columns:66px 1fr 66px;border-bottom:0}.quote-heading h2{text-align:center;text-decoration:underline;font-family:Tahoma,Arial,sans-serif}.quote-footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;font:9px Tahoma,Arial,sans-serif;margin-top:10px;break-inside:avoid}
+
+.scope-results{display:grid;gap:6px;max-height:240px;overflow:auto}.scope-results:empty{display:none}.scope-results button{width:100%;text-align:left;white-space:normal}.scope-results button[aria-pressed="true"]{background:#ffe4d5;color:#672a08;outline:2px solid #b43a00;outline-offset:-2px}#scopeStatus{margin:0}
