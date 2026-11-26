@@ -5,9 +5,12 @@ const path = require('node:path');
 const appIcons = require('./pwa-icons');
 const {Pool}=require('pg');
 const {CentralStorage,StorageError}=require('./central-storage');
-const {assignedRecords,verifyPassword}=require('./central-accounts');
+const {assignedRecords,passwordDigest,verifyPassword}=require('./central-accounts');
+const {applySupplierAction,supplierNoticeTarget}=require('./supplier-workflow');
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for centralized storage.');
-const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000});
+const staging=process.env.SNAGGING_STAGE==='true';
+const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:30000,
+  ...(staging?{options:'-c search_path=snagging_stage'}:{})});
 const storage=new CentralStorage(pool);
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 
@@ -59,7 +62,7 @@ async function login(req, res) {
     identity={username,role:'abfm',legacy:true};
   }else{
     const {rows:[account]}=await pool.query('SELECT username,role,password_digest FROM snagging_user WHERE username=$1 AND enabled',[form.get('username')]);
-    if(!account||!await verifyPassword(form.get('password')||'',account.password_digest))return signIn(res,true);
+    if(!account||account.role==='client'||!await verifyPassword(form.get('password')||'',account.password_digest))return signIn(res,true);
     identity={username:account.username,role:account.role,legacy:false};
   }
   const token = randomBytes(32).toString('hex');
@@ -73,7 +76,9 @@ const routes = new Map([
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/app.webmanifest', ['app.webmanifest', 'application/manifest+json; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
-  ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']]
+  ['/brand.js', ['brand.js', 'text/javascript; charset=utf-8']],
+  ['/supplier', ['supplier.html','text/html; charset=utf-8']],
+  ['/supplier.js', ['supplier.js','text/javascript; charset=utf-8']]
 ]);
 function respondJson(res,status,data){
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
@@ -84,21 +89,25 @@ async function stateApi(req,res,pathname,session){
   let identity=session;
   if(!session.legacy){
     const {rows:[account]}=await pool.query('SELECT username,role,supplier,properties FROM snagging_user WHERE username=$1 AND enabled',[session.username]);
-    if(!account)return respondJson(res,403,{error:'This account is disabled.'});
+    if(!account||account.role==='client')return respondJson(res,403,{error:'This account is disabled.'});
     identity=account;
   }
   if(req.method==='GET'&&pathname==='/api/assigned'){
     if(identity.role==='abfm')return respondJson(res,403,{error:'Use the ABFM case workspace.'});
-    const {state}=await storage.get();
-    return respondJson(res,200,{records:assignedRecords(state,identity)});
+    const {revision,state}=await storage.get();
+    const records=assignedRecords(state,identity).map(record=>({
+      ...record,...(record.stage==='quotation'?{targetBudget:supplierNoticeTarget(state.cases.find(c=>c.id===record.id))}:{})
+    }));
+    return respondJson(res,200,{revision,records});
   }
-  if(identity.role!=='abfm')return respondJson(res,403,{error:'This operation requires an ABFM account.'});
+  const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
+  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
   if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
   if(req.method==='GET'&&pathname==='/api/export'){
     res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
     return respondJson(res,200,await storage.get());
   }
-  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':null;
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
     req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
@@ -115,6 +124,34 @@ async function stateApi(req,res,pathname,session){
   try{payload=JSON.parse(Buffer.concat(chunks).toString());}
   catch{return respondJson(res,400,{error:'Invalid save payload.'});}
   if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
+  if(mode==='account'){
+    if(typeof payload.password!=='string'||payload.password.length<16||payload.password.length>256)return respondJson(res,400,{error:'Use a unique password of 16 to 256 characters.'});
+    const account='rahati-bayti';
+    if(username===account)return respondJson(res,409,{error:'The ABFM username cannot be used for Rahati.'});
+    const digest=await passwordDigest(payload.password);
+    const result=await pool.query(`
+      WITH change AS (
+        INSERT INTO snagging_user(username,password_digest,role,supplier) VALUES($1,$2,'rahati','Rahati Bayti')
+        ON CONFLICT(username) DO UPDATE SET password_digest=EXCLUDED.password_digest, enabled=true
+        WHERE snagging_user.role='rahati' RETURNING username
+      )
+      INSERT INTO snagging_security_audit(actor,target_user,action)
+      SELECT $3,username,'Rahati account password configured' FROM change
+    `,[account,digest,identity.username]);
+    if(!result.rowCount)return respondJson(res,409,{error:'That username is assigned to another role.'});
+    for(const [key,value] of sessions)if(value.username===account)sessions.delete(key);
+    return respondJson(res,200,{username:account});
+  }
+  if(mode==='supplier'){
+    if(identity.role!=='rahati')return respondJson(res,403,{error:'Only the assigned supplier can submit this action.'});
+    const {revision,state}=await storage.get();
+    if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before submitting.'});
+    const record=state.cases.find(c=>c.id===payload.caseId);
+    if(!record)return respondJson(res,404,{error:'Assigned case not found.'});
+    applySupplierAction(record,identity,payload);
+    await storage.write(revision,state,identity.username,mode);
+    return respondJson(res,200,{saved:true});
+  }
   return respondJson(res,200,await storage.write(payload.revision,payload.state,identity.username,mode));
 }
 const server = http.createServer((req, res) => {
@@ -155,9 +192,15 @@ const server = http.createServer((req, res) => {
     res.writeHead(303, {Location:'/login'});
     return res.end();
   }
-  if(session&&session.role!=='abfm'&&!['/style.css','/app.webmanifest'].includes(pathname)){
-    res.writeHead(403);
-    return res.end('The ABFM operator interface is restricted to ABFM accounts.');
+  if(session&&session.role!=='abfm'){
+    if(pathname==='/'||pathname==='/index.html'){
+      res.writeHead(303,{Location:'/supplier'});
+      return res.end();
+    }
+    if(!['/supplier','/supplier.js','/app.js','/brand.js','/style.css','/app.webmanifest'].includes(pathname)){
+      res.writeHead(403);
+      return res.end('This page is restricted to ABFM accounts.');
+    }
   }
   const asset = routes.get(pathname);
   if (!asset) {
@@ -176,7 +219,10 @@ const server = http.createServer((req, res) => {
 });
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
-storage.initialize().then(()=>{
+(async()=>{
+  if(staging)await pool.query('CREATE SCHEMA IF NOT EXISTS snagging_stage');
+  await storage.initialize();
+})().then(()=>{
   server.listen(port,host,()=>console.log('ABFM Snagging server listening on port '+server.address().port));
 }).catch(error=>{
   console.error('Unable to initialize PostgreSQL storage',error.code||error.name);
