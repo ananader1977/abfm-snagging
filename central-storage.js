@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS snagging_user (
   username text PRIMARY KEY,
   password_digest text NOT NULL,
   role text NOT NULL CHECK (role IN ('abfm','rahati','client')),
+  -- Keep role list upgradeable as new internal roles are added.
   supplier text,
   properties jsonb NOT NULL DEFAULT '[]'::jsonb,
   enabled boolean NOT NULL DEFAULT true,
@@ -155,6 +156,8 @@ CREATE TABLE IF NOT EXISTS snagging_state (
   revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
   document jsonb NOT NULL DEFAULT '{"cases":[],"catalog":null,"sequence":1199}'::jsonb
 );
+ALTER TABLE snagging_user DROP CONSTRAINT IF EXISTS snagging_user_role_check;
+ALTER TABLE snagging_user ADD CONSTRAINT snagging_user_role_check CHECK (role IN ('abfm','rahati','client','operations'));
 INSERT INTO snagging_state (singleton) VALUES (true) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS snagging_attachment (
   digest text PRIMARY KEY,
