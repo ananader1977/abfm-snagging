@@ -106,17 +106,18 @@ async function stateApi(req,res,pathname,session){
     return respondJson(res,200,{revision,records});
   }
   const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
+  const operationsWrite=pathname==='/api/operations-action'&&req.method==='PUT';
   if(identity.role==='operations'){
     if(req.method==='GET'&&pathname==='/api/state'){const result=await storage.get();return respondJson(res,200,{...result,state:{...result.state,cases:result.state.cases.filter(record=>record.step!==3&&record.step!==9)}});}
-    return respondJson(res,403,{error:'The operations account has read-only access.'});
+    if(!operationsWrite)return respondJson(res,403,{error:'Operations can only request quotation resubmission during CS Approval.'});
   }
-  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati'))return respondJson(res,403,{error:'This operation requires an ABFM account.'});
+  if(identity.role!=='abfm'&&(!supplierWrite||identity.role!=='rahati')&&!operationsWrite)return respondJson(res,403,{error:'This operation requires an ABFM account.'});
   if(req.method==='GET'&&pathname==='/api/state')return respondJson(res,200,await storage.get());
   if(req.method==='GET'&&pathname==='/api/export'){
     res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
     return respondJson(res,200,await storage.get());
   }
-  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':operationsWrite?'operations-action':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
     req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
@@ -154,6 +155,26 @@ async function stateApi(req,res,pathname,session){
     if(!result.rowCount)return respondJson(res,409,{error:'That username is assigned to another role.'});
     for(const [key,value] of sessions)if(value.username===account)sessions.delete(key);
     return respondJson(res,200,{username:account});
+  }
+  if(mode==='operations-action'){
+    if(identity.role!=='operations')return respondJson(res,403,{error:'Only Operations can request quotation resubmission.'});
+    if(payload.action!=='reject-quotation')return respondJson(res,400,{error:'Unknown Operations action.'});
+    const reason=typeof payload.reason==='string'?payload.reason.trim().slice(0,1000):'';
+    if(!reason)return respondJson(res,400,{error:'Enter a reason for rejecting the quotation.'});
+    const {revision,state}=await storage.get();
+    if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before submitting.'});
+    const record=state.cases.find(c=>c.id===payload.caseId);
+    if(!record)return respondJson(res,404,{error:'Case not found.'});
+    if(record.step!==5||!record.bids.some(bid=>bid.supplier==='Rahati Bayti')){
+      return respondJson(res,409,{error:'Only a Rahati quotation at CS Approval can be returned for resubmission.'});
+    }
+    record.step=4;
+    record.award=null;
+    delete record.awardedBid;
+    record.quoteResubmissionRequested=true;
+    record.history.unshift({event:'Operations rejected Rahati quotation and requested resubmission · '+reason,time:new Date().toISOString()});
+    const saved=await storage.write(revision,state,identity.username,mode);
+    return respondJson(res,200,{saved:true,revision:saved.revision});
   }
   if(mode==='supplier'){
     if(identity.role!=='rahati')return respondJson(res,403,{error:'Only the assigned supplier can submit this action.'});
