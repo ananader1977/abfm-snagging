@@ -167,6 +167,20 @@ function quotationAllowed(c,bid) {
 }
 const priceGateMessage = 'Resolve the pricing before approval. The selling subtotal must be at least 21% above Vendor Budget or each selling rate must exceed the selected vendor rate.';
 const changedRate = (snag, vendorRate) => Number.isFinite(snag.budget) && cents(snag.budget)!==cents(vendorRate);
+function rahatiBudgetNotice(c,rates,budgets) {
+  const ready=c.snags.length>0&&c.snags.every(line=>Number.isFinite(line.rate)&&Number.isFinite(line.qty)&&line.qty>0);
+  const sellingCents=ready?cents(total(c)):null;
+  if(!Number.isSafeInteger(sellingCents)||sellingCents<=0)return {text:'The overall target budget is unavailable for this quotation.',over:false};
+  const target=Number(BigInt(sellingCents)*100n/121n);
+  const targetText='Overall target budget: '+money(target/100)+' before VAT.';
+  if(rates.some(rate=>rate===null))return {text:targetText+' Enter all rates to check your quotation.',over:false};
+  const quoted=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
+  const over=quoted>target;
+  const changed=budgets.every(Number.isFinite)&&quoted!==c.snags.reduce((sum,line,i)=>sum+cents(amount(budgets[i],line.qty)),0);
+  const result=over?'Your quotation exceeds the target budget. Please review the rates before submitting.':
+    changed?'Your quotation differs from the original budget and is within the overall target.':'Your quotation is within the overall target.';
+  return {text:targetText+' Your subtotal: '+money(quoted/100)+'. '+result,over};
+}
 function vendorBudget(snag,catalog) {
   if(Number.isFinite(snag.budget))return snag.budget;
   const budget=catalog.find(line=>line.ref===snag.ref)?.budget;
@@ -567,6 +581,7 @@ function render() {
       form('bid',select('supplier','Supplier',suppliers)+field('reference','Quotation reference')+
       '<p id="bidBudgetStatus" class="meta" role="status"></p>'+
       c.snags.map((s,i)=>field('rate'+i,'Supplier rate · '+e(s.ref),'number','min="0" max="100000000" step=".01"')).join('')+
+      '<p id="rahatiTargetNotice" class="meta" role="status" aria-live="polite"></p>'+
       '<div id="rahatiPrintOptions"><label>Rahati quotation format<select name="rahatiTemplate"><option value="detailed">Detailed RFQ and rectification</option><option value="standard">Standard service quotation</option></select></label>'+
       button('previewRahati','Preview Rahati quotation')+'</div>','Record quotation revision');
     panel+=form('vendorReturn',field('quotation','Import a previously issued Rahati quotation','file','accept=".pdf,.json,application/pdf,application/json"'),'Import Rahati quotation');
@@ -639,6 +654,14 @@ function render() {
     const budgets=c.snags.map(s=>vendorBudget(s,catalog));
     const drafts=new Map();
     let supplier=fields.supplier.value;
+    const updateTargetNotice=()=>{
+      const notice=$('rahatiTargetNotice');
+      notice.hidden=supplier!=='Rahati Bayti';
+      if(notice.hidden){notice.textContent='';return;}
+      const result=rahatiBudgetNotice(c,inputs.map(input=>readRate(input.value)),budgets);
+      notice.classList.toggle('error',result.over);
+      notice.textContent=result.text;
+    };
     const loadRates=()=>{
       const rahati=supplier==='Rahati Bayti';
       $('rahatiPrintOptions').hidden=!rahati;
@@ -648,7 +671,9 @@ function render() {
       $('bidBudgetStatus').textContent=rahati
         ? 'Rates start from Vendor Budget and can be edited.'+(missing?' '+missing+' line(s) have no single usable Vendor Budget. Check the workbook.':'')
         : 'Enter the rates quoted by '+supplier+'.';
+      updateTargetNotice();
     };
+    inputs.forEach(input=>input.addEventListener('input',updateTargetNotice));
     fields.supplier.onchange=()=>{
       drafts.set(supplier,inputs.map(input=>input.value));
       supplier=fields.supplier.value;
