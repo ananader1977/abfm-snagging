@@ -403,13 +403,26 @@ function quotationSummaryData(c) {
   ],classNames:new Set([2]),pictures:[]};
 }
 
+function rahatiQuoteTotals(c,rates) {
+  const subtotalCents=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
+  const vatCents=Math.round(subtotalCents*.05);
+  return {subtotalCents,vatCents,totalCents:subtotalCents+vatCents};
+}
+function rahatiExcelSummary(c,reference,rates,template) {
+  const fields=rahatiQuotationFields(c,reference,template);
+  const {subtotalCents,vatCents,totalCents}=rahatiQuoteTotals(c,rates);
+  return {lines:[
+    ['Rahati Bayti quotation summary'],
+    ['Rahati quotation reference','ABFM case ID','To','Site / address','Date','Subtotal excluding VAT (AED)','VAT (AED)','Total including VAT (AED)'],
+    [fields.reference,c.id,fields.recipient,fields.address,fields.date,subtotalCents/100,vatCents/100,totalCents/100]
+  ],classNames:new Set([2]),pictures:[]};
+}
 function rahatiQuotationDocument(c,reference,rates,template) {
   const detailed=template==='detailed';
   const details=rahatiQuotationFields(c,reference,template);
   const date=details.date.split('-').reverse().join('/');
   const logo=globalThis.brand?.rahati || 'rahati.png';
-  const subtotalCents=c.snags.reduce((sum,line,i)=>sum+cents(amount(rates[i],line.qty)),0);
-  const vatCents=Math.round(subtotalCents*.05);
+  const {subtotalCents,vatCents,totalCents}=rahatiQuoteTotals(c,rates);
   const meta=(label,value,arabic)=>'<div><strong>'+label+'</strong><span>'+e(value||'–')+'</span><b lang="ar" dir="rtl">'+arabic+'</b></div>';
   const headings=detailed?['SN','Item description','Photos','Qty','Unit','Unit rate','Amount']:['#','Description','Unit','Qty','Unit rate','Total'];
   const items=c.snags.map((line,i)=>{
@@ -430,7 +443,7 @@ function rahatiQuotationDocument(c,reference,rates,template) {
     (detailed?'<p class="rahati-rfq">Request For Quotation (RFQ)<br>Procurement and Logistics Department</p>':'')+
     technical+'<div class="rahati-items">'+rows(headings,items)+'</div>'+
     '<table class="rahati-totals"><tbody>'+
-    [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',subtotalCents+vatCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
+    [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',totalCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
     '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>'+e(details.notes)+'</p></div>'+
     '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div></div>'+
     '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div></section>';
@@ -452,10 +465,11 @@ function showRahatiQuotation(c,bidForm) {
   const specs=rahatiFieldSpecs.filter(([key])=>template==='detailed'||!['requester','location','task','response','instructions'].includes(key));
   dialog.innerHTML=renderSheet()+quotationEditor(specs,rahatiQuotationFields(c,reference,template))+
     '<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> '+
-    '<button class="print" type="button">Print / Save PDF</button> <button class="excel secondary" type="button">Download Excel</button> <button class="dismiss secondary" type="button">Close</button>';
+    '<button class="print" type="button">Print / Save PDF</button> <button class="excel secondary" type="button">Download Excel</button> <button class="vendor-summary secondary" type="button">Download Excel summary</button> <button class="dismiss secondary" type="button">Close</button>';
   document.body.append(dialog);
   dialog.querySelector('.print').onclick=()=>window.print();
   dialog.querySelector('.excel').onclick=()=>downloadQuotationExcel(dialog,reference+'-Rahati-'+template);
+  dialog.querySelector('.vendor-summary').onclick=()=>downloadExcelFile(rahatiExcelSummary(c,reference,rates,template),reference+'-Rahati-Summary');
   wireQuotationEditor(dialog,renderSheet,updates=>{
     const previous=c.rahatiQuotationDetails;
     c.rahatiQuotationDetails={...previous,[template]:updates};
@@ -602,6 +616,8 @@ function wireQuotationEditor(dialog,renderSheet,saveDetails,sheetSelector='.quot
     edit.hidden=open;
     print.disabled=open;
     if(excel)excel.disabled=open;
+    const summary=dialog.querySelector('.vendor-summary');
+    if(summary)summary.disabled=open;
     if(open){
       notice.textContent='';
       editor.querySelector('input,textarea')?.focus();
