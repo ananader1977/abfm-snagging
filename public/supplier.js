@@ -36,7 +36,7 @@ function wireSubmit(form,handler){
 }
 function quotationForm(record,c){
   const hasNonBoq=record.items.some(line=>line.source==='Non-BOQ');
-  const nonBoqNotice=hasNonBoq?'<p class="supplier-discount-notice"><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'';
+  const nonBoqNotice=hasNonBoq?'<p class="supplier-discount-notice"><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 20% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'';
   const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · '+
     (Number.isFinite(line.vendorBudget)?'Target budget '+money(line.vendorBudget):'Non-BOQ · excluded from target')+' · Qty '+line.qty,'number',
     'min="0" max="100000000" step=".01" value="'+(Number.isFinite(line.vendorBudget)?line.vendorBudget:'')+'"')).join('');

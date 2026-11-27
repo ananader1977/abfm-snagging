@@ -587,7 +587,7 @@ function rahatiQuotationDocument(c,reference,rates,template) {
     [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',totalCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
     '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>'+e(details.notes)+'</p></div>'+
     '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div>'+
-    (c.snags.some(line=>line.source==='Non-BOQ')?'<div class="rahati-nonboq-note"><strong>Non-BOQ item instruction</strong><p>Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p></div>':'')+'</div>'+
+    (c.snags.some(line=>line.source==='Non-BOQ')?'<div class="rahati-nonboq-note"><strong>Non-BOQ item instruction</strong><p>Enter your net rate after applying a 20% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p></div>':'')+'</div>'+
     '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
     '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div></section>';
@@ -723,7 +723,7 @@ function inspectionReport(c,rfq=false) {
     const rfqNote=rfq?'<div class="inspection-rfq-notes">'+
       (c.rfq?.deadline?'<p><strong>Quotation deadline:</strong> '+e(c.rfq.deadline)+'</p>':'')+
       (c.rfq?.instructions?'<p><strong>Site instructions:</strong> '+e(c.rfq.instructions)+'</p>':'')+
-      (c.snags.some(snag=>snag.source==='Non-BOQ')?'<p><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'')+
+      (c.snags.some(snag=>snag.source==='Non-BOQ')?'<p><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 20% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'')+
       '</div>':'';
     return '<section class="inspection-sheet"><div class="inspection-heading"><img src="'+e(logo)+'" alt="Al Bonian FM">'+
       '<h2 id="inspection-title-'+index+'">'+(rfq?'Request for Quotation (RFQ)':'End of Lease Inspection Report')+'</h2></div>'+
