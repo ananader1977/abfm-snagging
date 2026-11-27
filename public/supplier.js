@@ -167,8 +167,9 @@ function renderAssigned(message){
       const target=$('supplierTarget'), current=rates();
       if(!Number.isFinite(record.targetBudget)){target.textContent='Overall target budget is unavailable.';return;}
       const base='Overall target budget: '+money(record.targetBudget)+' before VAT.';
-      if(current.some(rate=>rate===null)){target.textContent=base+' Enter all rates to check your quotation.';return;}
       const boqLines=record.items.map((line,index)=>({line,index})).filter(({line})=>line.source!=='Non-BOQ'&&!String(line.ref||'').startsWith('NBOQ-'));
+      if(!boqLines.length){target.classList.remove('error');target.textContent='No BOQ items are subject to the target budget. Non-BOQ items are excluded.';return;}
+      if(boqLines.some(({index})=>current[index]===null)){target.classList.remove('error');target.textContent=base+' Enter all BOQ rates to check your quotation.';return;}
       const subtotalCents=boqLines.reduce((sum,{line,index})=>sum+Math.round(Number(current[index])*Number(line.qty)*100),0);
       const subtotal=subtotalCents/100;
       const over=subtotalCents>Math.round(record.targetBudget*100);
