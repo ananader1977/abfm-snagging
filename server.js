@@ -117,7 +117,7 @@ async function workflowEmails(previousState,nextState){
     }else if(old.step<8&&record.step===8){
       event='work-authorized';recipients=[settings.rahatiEmail];
     }else if(old.step<10&&record.step===10){
-      event='reinspection-requested';recipients=[settings.rahatiEmail];
+      event='reinspection-requested';recipients=[settings.rahatiEmail,...settings.engineerEmails,record.engineerEmail||''];
     }
     if(!event)continue;
     const reference=cleanHeader(record.reference||record.id||'Snagging case');
