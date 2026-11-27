@@ -24,6 +24,7 @@ The app sends notification email after server-side saves when a case is assigned
 - `SMTP_USER=ananader1@gmail.com` (default sender account)
 - `SMTP_PASS` = a Google App Password for that account (store only as a Render secret)
 - `RAHATI_EMAIL` = Rahati Bayti notification email address
+- `ENGINEER_EMAILS` = comma-separated ABFM inspection team email addresses
 - `SMTP_HOST=smtp.gmail.com` and `SMTP_PORT=465` are the defaults; `SMTP_FROM` and `APP_BASE_URL` are optional overrides.
 
-The assigned engineer's email is entered when ABFM assigns the inspection. A record is saved even if email delivery is unavailable; the app shows that a notification needs attention.
+ABFM administrators can edit Rahati’s and the engineers’ recipient addresses in the application’s Workflow email recipients settings. Those addresses are saved in PostgreSQL. A record is saved even if email delivery is unavailable; the app shows that a notification needs attention.

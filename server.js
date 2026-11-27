@@ -21,9 +21,31 @@ const smtpUser=process.env.SMTP_USER||'ananader1@gmail.com';
 const smtpPass=process.env.SMTP_PASS;
 const smtpHost=process.env.SMTP_HOST||'smtp.gmail.com';
 const smtpPort=Number(process.env.SMTP_PORT||465);
-const rahatiEmail=process.env.RAHATI_EMAIL||'';
+const defaultRahatiEmail=process.env.RAHATI_EMAIL||'';
+const defaultEngineerEmails=(process.env.ENGINEER_EMAILS||'').split(',').map(value=>value.trim()).filter(validEmail);
 function cleanHeader(value){return String(value||'').replace(/[\r\n]+/g,' ').trim().slice(0,500);}
 function validEmail(value){return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String(value||''));}
+let notificationSettingsReady;
+async function ensureNotificationSettings(){
+  if(!notificationSettingsReady)notificationSettingsReady=(async()=>{
+    await pool.query(`CREATE TABLE IF NOT EXISTS snagging_notification_settings (
+      id smallint PRIMARY KEY CHECK (id=1),
+      rahati_email text NOT NULL,
+      engineer_emails text[] NOT NULL DEFAULT '{}',
+      updated_by text NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`);
+    await pool.query(`INSERT INTO snagging_notification_settings(id,rahati_email,engineer_emails,updated_by)
+      VALUES(1,$1,$2,'system') ON CONFLICT(id) DO NOTHING`,[defaultRahatiEmail,defaultEngineerEmails]);
+  })();
+  try{await notificationSettingsReady;}
+  catch(error){notificationSettingsReady=null;throw error;}
+}
+async function getNotificationSettings(){
+  await ensureNotificationSettings();
+  const {rows:[settings]}=await pool.query('SELECT rahati_email,engineer_emails,updated_by,updated_at FROM snagging_notification_settings WHERE id=1');
+  return {rahatiEmail:settings.rahati_email,engineerEmails:settings.engineer_emails||[],updatedBy:settings.updated_by,updatedAt:settings.updated_at};
+}
 async function sendSmtpMail(to,subject,body){
   if(!smtpPass)throw new Error('SMTP_PASS is not configured');
   if(!validEmail(smtpUser)||!validEmail(to))throw new Error('SMTP sender or recipient address is invalid');
@@ -79,20 +101,21 @@ async function sendSmtpMail(to,subject,body){
   }finally{socket.end();}
 }
 async function workflowEmails(previousState,nextState){
+  const settings=await getNotificationSettings();
   const previous=new Map((previousState?.cases||[]).map(record=>[record.id,record]));
   const queued=[];
   for(const record of nextState?.cases||[]){
     const old=previous.get(record.id);
     if(!old)continue;
-    let event=null,to='';
+    let event=null,recipients=[];
     if(old.step<1&&record.step===1){
-      event='inspection-assigned';to=record.engineerEmail||'';
+      event='inspection-assigned';recipients=[...settings.engineerEmails,record.engineerEmail||''];
     }else if(old.step<3&&record.step===3){
-      event='rfq-issued';to=rahatiEmail;
+      event='rfq-issued';recipients=[settings.rahatiEmail];
     }else if(old.step<8&&record.step===8){
-      event='work-authorized';to=rahatiEmail;
+      event='work-authorized';recipients=[settings.rahatiEmail];
     }else if(old.step<10&&record.step===10){
-      event='reinspection-requested';to=rahatiEmail;
+      event='reinspection-requested';recipients=[settings.rahatiEmail];
     }
     if(!event)continue;
     const reference=cleanHeader(record.reference||record.id||'Snagging case');
@@ -114,7 +137,9 @@ async function workflowEmails(previousState,nextState){
       record.ordered?'Order confirmation: '+record.ordered:'',
       'Open application: '+url+(event==='inspection-assigned'?'/':'/supplier')
     ].filter(Boolean).join('\n');
-    queued.push({event,to,subject,body,reference});
+    const targets=[...new Set(recipients.filter(validEmail))];
+    if(!targets.length)queued.push({event,to:'',subject,body,reference});
+    else for(const to of targets)queued.push({event,to,subject,body,reference});
   }
   const results=[];
   for(const message of queued){
@@ -215,6 +240,10 @@ async function stateApi(req,res,pathname,session){
     if(!account||account.role==='client')return respondJson(res,403,{error:'This account is disabled.'});
     identity=account;
   }
+  if(pathname==='/api/notification-settings'&&req.method==='GET'){
+    if(identity.role!=='abfm')return respondJson(res,403,{error:'Only ABFM administrators can view notification settings.'});
+    return respondJson(res,200,{settings:await getNotificationSettings(),smtpConfigured:Boolean(smtpPass)});
+  }
   if(req.method==='GET'&&pathname==='/api/assigned'){
     if(identity.role==='abfm')return respondJson(res,403,{error:'Use the ABFM case workspace.'});
     const {revision,state}=await storage.get();
@@ -225,6 +254,7 @@ async function stateApi(req,res,pathname,session){
   }
   const supplierWrite=pathname==='/api/supplier-action'&&req.method==='PUT';
   const operationsWrite=pathname==='/api/operations-action'&&req.method==='PUT';
+  const notificationWrite=pathname==='/api/notification-settings'&&req.method==='PUT';
   if(identity.role==='operations'){
     if(req.method==='GET'&&pathname==='/api/state'){const result=await storage.get();return respondJson(res,200,{...result,state:{...result.state,cases:result.state.cases.filter(record=>record.step!==3&&record.step!==9)}});}
     if(!operationsWrite)return respondJson(res,403,{error:'Operations can only request quotation resubmission during CS Approval.'});
@@ -235,7 +265,7 @@ async function stateApi(req,res,pathname,session){
     res.setHeader('Content-Disposition','attachment; filename="abfm-snagging-data.json"');
     return respondJson(res,200,await storage.get());
   }
-  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':operationsWrite?'operations-action':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
+  const mode=pathname==='/api/migration'?'migration':pathname==='/api/state'?'save':supplierWrite?'supplier':operationsWrite?'operations-action':notificationWrite?'notification-settings':pathname==='/api/rahati-account'?'account':pathname==='/api/operations-account'?'operations-account':null;
   if(!mode||req.method!=='PUT')return respondJson(res,404,{error:'Unknown storage operation.'});
   if(['cross-site','same-site'].includes(req.headers['sec-fetch-site'])||
     req.headers['content-type']?.split(';')[0].trim()!=='application/json'){
@@ -252,6 +282,20 @@ async function stateApi(req,res,pathname,session){
   try{payload=JSON.parse(Buffer.concat(chunks).toString());}
   catch{return respondJson(res,400,{error:'Invalid save payload.'});}
   if(!payload||typeof payload!=='object')return respondJson(res,400,{error:'Invalid save payload.'});
+  if(mode==='notification-settings'){
+    if(identity.role!=='abfm')return respondJson(res,403,{error:'Only ABFM administrators can edit notification settings.'});
+    const rahatiEmail=typeof payload.rahatiEmail==='string'?payload.rahatiEmail.trim():'';
+    const rawEmails=Array.isArray(payload.engineerEmails)?payload.engineerEmails:
+      typeof payload.engineerEmails==='string'?payload.engineerEmails.split(/[\n,;]+/):[];
+    const engineerEmails=[...new Set(rawEmails.map(value=>String(value||'').trim()).filter(Boolean))];
+    if(!validEmail(rahatiEmail))return respondJson(res,400,{error:'Enter a valid Rahati Bayti email address.'});
+    if(!engineerEmails.length||engineerEmails.length>20||engineerEmails.some(value=>!validEmail(value)))
+      return respondJson(res,400,{error:'Enter between 1 and 20 valid engineer email addresses, separated by commas or new lines.'});
+    await ensureNotificationSettings();
+    await pool.query(`UPDATE snagging_notification_settings SET rahati_email=$1,engineer_emails=$2,updated_by=$3,updated_at=now() WHERE id=1`,
+      [rahatiEmail,engineerEmails,identity.username]);
+    return respondJson(res,200,{settings:await getNotificationSettings()});
+  }
   if(mode==='account'||mode==='operations-account'){
     if(identity.role!=='abfm')return respondJson(res,403,{error:'Only ABFM can configure user accounts.'});
     if(typeof payload.password!=='string'||payload.password.length<16||payload.password.length>256)return respondJson(res,400,{error:'Use a unique password of 16 to 256 characters.'});
@@ -304,7 +348,7 @@ async function stateApi(req,res,pathname,session){
     applySupplierAction(record,identity,payload);
     const saved=await storage.write(revision,state,identity.username,mode);
     const notifications=await workflowEmails(previousState,state);
-    return respondJson(res,200,{...saved,saved:true,notifications});
+    return respondJson(res,200,{saved:true,revision:saved.revision,notifications});
   }
   if(mode==='save'){
     const {revision:currentRevision,state:previousState}=await storage.get();

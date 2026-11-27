@@ -1021,7 +1021,7 @@ function render() {
     }); return;
   }
   let panel='';
-  if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('engineerEmail','Engineer email','email')+field('date','Inspection date','date'),'Assign inspection');
+  if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+optionalField('engineerEmail','Additional engineer email (optional)','email')+field('date','Inspection date','date'),'Assign inspection');
   if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+select('scopeType','Line item type',['BOQ item','Non-BOQ item'])+
     '<div id="boqScopeFields">'+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
     '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
@@ -1352,3 +1352,36 @@ if(installApp){
 
 // Load the shared server state before enabling BOQ or other save actions.
 startOnline();
+
+async function loadNotificationSettings(){
+  const box=$('notificationSettings'),status=$('notificationSettingsStatus');
+  if(!box||!status)return;
+  try{
+    const response=await fetch('/api/notification-settings',{cache:'no-store'});
+    if(response.status===403||response.status===404){box.hidden=true;return;}
+    const result=await response.json();
+    if(!response.ok)throw Error(result.error||'Unable to load email recipients.');
+    $('rahatiNotifyEmail').value=result.settings.rahatiEmail||'';
+    $('engineerNotifyEmails').value=(result.settings.engineerEmails||[]).join('\n');
+    status.textContent=result.smtpConfigured?'Recipients saved on the server. Email delivery is configured.':'Recipients saved. Add SMTP_PASS in Render to enable email delivery.';
+  }catch(error){status.textContent=error.message;}
+}
+const notificationSettingsForm=$('notificationSettingsForm');
+if(notificationSettingsForm){
+  notificationSettingsForm.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const button=notificationSettingsForm.querySelector('button[type="submit"]');
+    button.disabled=true;
+    const status=$('notificationSettingsStatus');
+    try{
+      const response=await fetch('/api/notification-settings',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({rahatiEmail:$('rahatiNotifyEmail').value.trim(),engineerEmails:$('engineerNotifyEmails').value.split(/[\n,;]+/).map(value=>value.trim()).filter(Boolean)})});
+      const result=await response.json();
+      if(!response.ok)throw Error(result.error||'Unable to save email recipients.');
+      $('engineerNotifyEmails').value=(result.settings.engineerEmails||[]).join('\n');
+      status.textContent=result.smtpConfigured?'Email recipients saved.':'Email recipients saved, but SMTP_PASS is missing from Render.';
+    }catch(error){status.textContent=error.message;}
+    finally{button.disabled=false;}
+  });
+}
+loadNotificationSettings();
