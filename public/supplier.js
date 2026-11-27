@@ -22,6 +22,7 @@ async function supplierWrite(record,action,data){
     body:JSON.stringify({...data,caseId:record.id,revision:supplierState.revision,action})});
   const result=await response.json();
   if(!response.ok)throw Error(result.error||'The server did not confirm the save.');
+  return result.notifications||[];
 }
 function wireSubmit(form,handler){
   form.onsubmit=async event=>{
@@ -205,8 +206,11 @@ function renderAssigned(message){
       finally{control.disabled=submit.disabled=false;}
     };
     wireSubmit(wcr,async fields=>{
-      await supplierWrite(record,'wcr-submit',await collect(fields));
-      await loadAssigned('Report submitted for ABFM Engineer reinspection.');
+      const notifications=await supplierWrite(record,'wcr-submit',await collect(fields));
+      const emailFailed=notifications.some(item=>item.status!=='sent');
+      await loadAssigned(emailFailed
+        ?'Report submitted for ABFM Engineer reinspection. Email confirmation could not be delivered; contact ABFM.'
+        :'Report submitted for ABFM Engineer reinspection.');
     });
   }
 }

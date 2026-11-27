@@ -16,6 +16,124 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5,connectionT
   ...(staging?{options:'-c search_path='+schema}:{})});
 const storage=new CentralStorage(pool);
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
+const tls=require('node:tls');
+const smtpUser=process.env.SMTP_USER||'ananader1@gmail.com';
+const smtpPass=process.env.SMTP_PASS;
+const smtpHost=process.env.SMTP_HOST||'smtp.gmail.com';
+const smtpPort=Number(process.env.SMTP_PORT||465);
+const rahatiEmail=process.env.RAHATI_EMAIL||'';
+function cleanHeader(value){return String(value||'').replace(/[\r\n]+/g,' ').trim().slice(0,500);}
+function validEmail(value){return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String(value||''));}
+async function sendSmtpMail(to,subject,body){
+  if(!smtpPass)throw new Error('SMTP_PASS is not configured');
+  if(!validEmail(smtpUser)||!validEmail(to))throw new Error('SMTP sender or recipient address is invalid');
+  const from=process.env.SMTP_FROM||smtpUser;
+  if(!validEmail(from))throw new Error('SMTP_FROM address is invalid');
+  const socket=tls.connect({host:smtpHost,port:smtpPort,servername:smtpHost,rejectUnauthorized:true});
+  socket.setTimeout(20000,()=>socket.destroy(new Error('SMTP connection timed out')));
+  const iterator=socket[Symbol.asyncIterator]();
+  let buffer='';
+  async function line(){
+    while(!buffer.includes('\r\n')){
+      const item=await iterator.next();
+      if(item.done)throw new Error('SMTP server closed the connection');
+      buffer+=item.value.toString('utf8');
+    }
+    const end=buffer.indexOf('\r\n'),value=buffer.slice(0,end);
+    buffer=buffer.slice(end+2);
+    return value;
+  }
+  async function response(){
+    const lines=[];
+    while(true){
+      const value=await line();lines.push(value);
+      if(/^\d{3} /.test(value))break;
+    }
+    const last=lines.at(-1),code=Number(last.slice(0,3));
+    return {code,text:lines.join(' ')};
+  }
+  async function command(value,allowed){
+    socket.write(value+'\r\n');
+    const result=await response();
+    if(!allowed.includes(result.code))throw new Error('SMTP '+result.code+' '+result.text);
+    return result;
+  }
+  try{
+    await new Promise((resolve,reject)=>{socket.once('secureConnect',resolve);socket.once('error',reject);});
+    const greeting=await response();if(greeting.code!==220)throw new Error('SMTP server rejected connection');
+    await command('EHLO abfm-snagging',[250]);
+    await command('AUTH PLAIN '+Buffer.from('\0'+smtpUser+'\0'+smtpPass).toString('base64'),[235]);
+    await command('MAIL FROM:<'+from+'>',[250]);
+    await command('RCPT TO:<'+to+'>',[250,251]);
+    await command('DATA',[354]);
+    const encodedBody=Buffer.from(String(body).replace(/\r?\n/g,'\r\n'),'utf8').toString('base64').match(/.{1,76}/g)?.join('\r\n')||'';
+    const encodedSubject='=?UTF-8?B?'+Buffer.from(cleanHeader(subject),'utf8').toString('base64')+'?=';
+    const message=[
+      'From: ABFM Snagging <'+from+'>','To: <'+to+'>','Subject: '+encodedSubject,
+      'MIME-Version: 1.0','Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64','',''+encodedBody,''
+    ].join('\r\n').replace(/\r?\n\./g,'\r\n..');
+    socket.write(message+'\r\n.\r\n');
+    const accepted=await response();if(accepted.code!==250)throw new Error('SMTP did not accept the message');
+    await command('QUIT',[221]);
+  }finally{socket.end();}
+}
+async function workflowEmails(previousState,nextState){
+  const previous=new Map((previousState?.cases||[]).map(record=>[record.id,record]));
+  const queued=[];
+  for(const record of nextState?.cases||[]){
+    const old=previous.get(record.id);
+    if(!old)continue;
+    let event=null,to='';
+    if(old.step<1&&record.step===1){
+      event='inspection-assigned';to=record.engineerEmail||'';
+    }else if(old.step<3&&record.step===3){
+      event='rfq-issued';to=rahatiEmail;
+    }else if(old.step<8&&record.step===8){
+      event='work-authorized';to=rahatiEmail;
+    }else if(old.step<10&&record.step===10){
+      event='reinspection-requested';to=rahatiEmail;
+    }
+    if(!event)continue;
+    const reference=cleanHeader(record.reference||record.id||'Snagging case');
+    const site=cleanHeader(record.site||record.property||record.location||'');
+    const url=(process.env.APP_BASE_URL||'https://abfm-snagging.onrender.com').replace(/\/$/,'');
+    const detail=event==='inspection-assigned'
+      ?'A snagging inspection has been assigned to you. Please review the case and complete the inspection in the application.'
+      :event==='rfq-issued'
+        ?'An RFQ has been issued to Rahati Bayti. Please sign in to review the scope and submit your quotation.'
+        :event==='work-authorized'
+          ?'The client has approved this job. You are authorized to start the work as per the approved scope and order details.'
+          :'The vendor work completion report has been submitted and the case is ready for ABFM reinspection.';
+    const subject=event==='inspection-assigned'?'Snagging inspection assigned · '+reference:
+      event==='rfq-issued'?'RFQ received · '+reference:
+      event==='work-authorized'?'Work authorized · '+reference:'Reinspection requested · '+reference;
+    const body=[detail,'','Case: '+reference,site?'Property / site: '+site:'',
+      record.rfq?.deadline?'Quotation deadline: '+record.rfq.deadline:'',
+      record.order?'Order: '+record.order:'',
+      record.ordered?'Order confirmation: '+record.ordered:'',
+      'Open application: '+url+(event==='inspection-assigned'?'/':'/supplier')
+    ].filter(Boolean).join('\n');
+    queued.push({event,to,subject,body,reference});
+  }
+  const results=[];
+  for(const message of queued){
+    if(!validEmail(message.to)){
+      console.warn('Workflow email skipped: recipient missing or invalid',message.event,message.reference);
+      results.push({event:message.event,status:'missing-recipient'});
+      continue;
+    }
+    try{
+      await sendSmtpMail(message.to,message.subject,message.body);
+      results.push({event:message.event,status:'sent'});
+    }catch(error){
+      console.error('Workflow email failed',message.event,message.reference,error.message);
+      results.push({event:message.event,status:'failed'});
+    }
+  }
+  return results;
+}
+
 
 const username = process.env.SNAGGING_USERNAME || 'abfm-admin';
 const password = process.env.SNAGGING_PASSWORD;
@@ -182,9 +300,18 @@ async function stateApi(req,res,pathname,session){
     if(revision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before submitting.'});
     const record=state.cases.find(c=>c.id===payload.caseId);
     if(!record)return respondJson(res,404,{error:'Assigned case not found.'});
+    const previousState=structuredClone(state);
     applySupplierAction(record,identity,payload);
-    await storage.write(revision,state,identity.username,mode);
-    return respondJson(res,200,{saved:true});
+    const saved=await storage.write(revision,state,identity.username,mode);
+    const notifications=await workflowEmails(previousState,state);
+    return respondJson(res,200,{...saved,saved:true,notifications});
+  }
+  if(mode==='save'){
+    const {revision:currentRevision,state:previousState}=await storage.get();
+    if(currentRevision!==payload.revision)return respondJson(res,409,{error:'The case changed on another device. Reload before submitting.'});
+    const saved=await storage.write(payload.revision,payload.state,identity.username,mode);
+    const notifications=await workflowEmails(previousState,payload.state);
+    return respondJson(res,200,{...saved,notifications});
   }
   return respondJson(res,200,await storage.write(payload.revision,payload.state,identity.username,mode));
 }

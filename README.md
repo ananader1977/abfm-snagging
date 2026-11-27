@@ -15,3 +15,15 @@ The free service may take time to wake after inactivity. GitHub Pages serves sta
 Walk through a request, confirm snags, record bids from Rahati Bayti and Guardian, approve the chosen scope through CS and the client, and submit supplier WCR evidence for ABFM Engineer verification. Print the inspection, quotation and completion report previews.
 
 The sign-in protects access to the prototype. Shared records, organization-specific permissions, official Dynamics form matching, email and live Dynamics synchronization are pending. Use synthetic data only. Keep original documents, rates and credentials out of source control.
+
+
+## Workflow email notifications
+
+The app sends notification email after server-side saves when a case is assigned for inspection, an RFQ is issued, client approval authorizes work, or a supplier submits a work completion report for reinspection. Add these Render environment variables to enable delivery:
+
+- `SMTP_USER=ananader1@gmail.com` (default sender account)
+- `SMTP_PASS` = a Google App Password for that account (store only as a Render secret)
+- `RAHATI_EMAIL` = Rahati Bayti notification email address
+- `SMTP_HOST=smtp.gmail.com` and `SMTP_PORT=465` are the defaults; `SMTP_FROM` and `APP_BASE_URL` are optional overrides.
+
+The assigned engineer's email is entered when ABFM assigns the inspection. A record is saved even if email delivery is unavailable; the app shows that a notification needs attention.

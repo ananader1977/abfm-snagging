@@ -42,8 +42,12 @@ async function save(path='/api/state',data={cases,catalog},redraw=true){
   if(writePending)throw Error('Another save is in progress. Try again.');
   writePending=true;
   try{
-    acceptState(await stateRequest(path,'PUT',{revision,state:data}),redraw);
-    $('syncStatus').textContent='Saved to the server.';
+    const result=await stateRequest(path,'PUT',{revision,state:data});
+    acceptState(result,redraw);
+    const failed=(result.notifications||[]).filter(item=>item.status!=='sent');
+    $('syncStatus').textContent=failed.length
+      ?'Saved to the server. Email notification needs attention: '+failed.map(item=>item.event.replaceAll('-',' ')).join(', ')+'.'
+      :'Saved to the server.';
   }finally{writePending=false;}
 }
 async function refreshState(){
@@ -1017,7 +1021,7 @@ function render() {
     }); return;
   }
   let panel='';
-  if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('date','Inspection date','date'),'Assign inspection');
+  if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+field('engineerEmail','Engineer email','email')+field('date','Inspection date','date'),'Assign inspection');
   if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+select('scopeType','Line item type',['BOQ item','Non-BOQ item'])+
     '<div id="boqScopeFields">'+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
     '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
