@@ -106,10 +106,12 @@ async function workflowEmails(previousState,nextState){
   const queued=[];
   for(const record of nextState?.cases||[]){
     const old=previous.get(record.id);
-    if(!old)continue;
     let event=null,recipients=[];
-    if(old.step<1&&record.step===1){
-      event='inspection-assigned';recipients=[...settings.engineerEmails,record.engineerEmail||''];
+    if(!old&&record.step===0){
+      event='snagging-created';recipients=settings.engineerEmails;
+    }else if(!old)continue;
+    else if(old.step<1&&record.step===1){
+      event='inspection-assigned';recipients=[record.engineerEmail||''];
     }else if(old.step<3&&record.step===3){
       event='rfq-issued';recipients=[settings.rahatiEmail];
     }else if(old.step<8&&record.step===8){
@@ -121,21 +123,24 @@ async function workflowEmails(previousState,nextState){
     const reference=cleanHeader(record.reference||record.id||'Snagging case');
     const site=cleanHeader(record.site||record.property||record.location||'');
     const url=(process.env.APP_BASE_URL||'https://abfm-snagging.onrender.com').replace(/\/$/,'');
-    const detail=event==='inspection-assigned'
-      ?'A snagging inspection has been assigned to you. Please review the case and complete the inspection in the application.'
+    const detail=event==='snagging-created'
+      ?'A new client snagging request has been created. Please review the request and assign an ABFM engineer.'
+      :event==='inspection-assigned'
+        ?'A snagging inspection has been assigned to you. Please review the case and complete the inspection in the application.'
       :event==='rfq-issued'
         ?'An RFQ has been issued to Rahati Bayti. Please sign in to review the scope and submit your quotation.'
         :event==='work-authorized'
           ?'The client has approved this job. You are authorized to start the work as per the approved scope and order details.'
           :'The vendor work completion report has been submitted and the case is ready for ABFM reinspection.';
-    const subject=event==='inspection-assigned'?'Snagging inspection assigned · '+reference:
+    const subject=event==='snagging-created'?'New snagging request · '+reference:
+      event==='inspection-assigned'?'Snagging inspection assigned · '+reference:
       event==='rfq-issued'?'RFQ received · '+reference:
       event==='work-authorized'?'Work authorized · '+reference:'Reinspection requested · '+reference;
     const body=[detail,'','Case: '+reference,site?'Property / site: '+site:'',
       record.rfq?.deadline?'Quotation deadline: '+record.rfq.deadline:'',
       record.order?'Order: '+record.order:'',
       record.ordered?'Order confirmation: '+record.ordered:'',
-      'Open application: '+url+(event==='inspection-assigned'?'/':'/supplier')
+      'Open application: '+url+(event==='rfq-issued'||event==='work-authorized'||event==='reinspection-requested'?'/supplier':'/')
     ].filter(Boolean).join('\n');
     const targets=[...new Set(recipients.filter(validEmail))];
     if(!targets.length)queued.push({event,to:'',subject,body,reference});
