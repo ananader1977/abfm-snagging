@@ -252,7 +252,7 @@ function rahatiBudgetNotice(c,rates,budgets) {
   if(!Number.isSafeInteger(sellingCents)||sellingCents<=0)return {text:'The overall BOQ target budget is unavailable for this quotation.',over:false};
   const target=Math.round(sellingCents*.79);
   const targetText='Overall BOQ target budget: '+money(target/100)+' before VAT. Non-BOQ items are excluded.';
-  if(rates.some(rate=>rate===null))return {text:targetText+' Enter all rates to check your quotation.',over:false};
+  if(selected.some(({index})=>rates[index]===null))return {text:targetText+' Enter all BOQ rates to check your quotation.',over:false};
   const quoted=selected.reduce((sum,{snag,index})=>sum+cents(amount(rates[index],snag.qty)),0);
   const over=quoted>target;
   const changed=selected.every(({index})=>Number.isFinite(budgets[index]))&&quoted!==selected.reduce((sum,{snag,index})=>sum+cents(amount(budgets[index],snag.qty)),0);
