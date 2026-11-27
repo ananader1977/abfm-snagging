@@ -9,13 +9,14 @@
 .inspection-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 15px;margin:8px 0;overflow-wrap:anywhere}
 .inspection-count{grid-column:1 / -1;text-align:right}
 .inspection-table{table-layout:fixed;margin:0}
-.inspection-table col:nth-child(1){width:7%}
-.inspection-table col:nth-child(2){width:39%}
-.inspection-table col:nth-child(3){width:41%}
-.inspection-table col:nth-child(4){width:13%}
+.inspection-table col:nth-child(1){width:6%}
+.inspection-table col:nth-child(2){width:29%}
+.inspection-table col:nth-child(3){width:40%}
+.inspection-table col:nth-child(4){width:10%}
+.inspection-table col:nth-child(5){width:15%}
 .inspection-table :is(th,td){border:1px solid #333;padding:6px;overflow-wrap:anywhere;vertical-align:middle}
 .inspection-table th{background:#ffe599}
-.inspection-table td:is(:first-child,:nth-child(2),:last-child){text-align:center}
+.inspection-table td:is(:first-child,:nth-child(2),:nth-child(4),:nth-child(5)){text-align:center}
 .inspection-comment{white-space:pre-wrap;margin-top:5px}
 .inspection-photo{max-width:100%;max-height:215px;object-fit:contain}
 .inspection-signatures{margin-top:16px;break-inside:avoid}
@@ -195,4 +196,6 @@
   .inspection-signature-grid,.quote-signatures{break-inside:avoid}
 }
 
-.inspection-rfq-notes{margin-top:10px;border:1px solid #333;padding:8px;font-size:12px}.inspection-rfq-notes p{margin:4px 0}.rfq-table col:nth-child(1){width:5%}.rfq-table col:nth-child(2){width:28%}.rfq-table col:nth-child(3){width:34%}.rfq-table col:nth-child(4){width:8%}.rfq-table col:nth-child(5){width:10%}.rfq-table col:nth-child(6){width:15%}.rfq-table :is(th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6)){text-align:center}.supplier-discount-notice,.rahati-nonboq-note{border-left:4px solid #bd3a00;background:#fff4ed;padding:10px;color:#532000}.rahati-nonboq-note p{margin:5px 0}
+.inspection-rfq-notes{margin-top:10px;border:1px solid #333;padding:8px;font-size:12px}.inspection-rfq-notes p{margin:4px 0}.rfq-table col:nth-child(1){width:6%}.rfq-table col:nth-child(2){width:29%}.rfq-table col:nth-child(3){width:40%}.rfq-table col:nth-child(4){width:10%}.rfq-table col:nth-child(5){width:15%}.rfq-table :is(th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5)){text-align:center}.supplier-discount-notice,.rahati-nonboq-note{border-left:4px solid #bd3a00;background:#fff4ed;padding:10px;color:#532000}.rahati-nonboq-note p{margin:5px 0}
+
+.confirmed-snag-editor{margin:14px 0}.confirmed-snag-item{border:1px solid #d7d9e0;border-radius:8px;padding:14px}.confirmed-snag-item h4{margin:0}.snag-edit-actions{display:flex;gap:8px;flex-wrap:wrap}.snag-edit-actions button{margin:0}

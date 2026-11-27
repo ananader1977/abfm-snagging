@@ -662,7 +662,6 @@ function inspectionFields(c) {
   inspectionItems(c).forEach((snag,i)=>{
     fields['location'+i]=snag.location||'';
     fields['notes'+i]=snag.notes||'';
-    fields['priority'+i]=snag.priority||'';
   });
   return {...fields,...c.inspectionDetails};
 }
@@ -670,7 +669,6 @@ function inspectionEditor(c) {
   const items=inspectionItems(c).flatMap((_,i)=>[
     ['location'+i,'Item '+(i+1)+' location',true],
     ['notes'+i,'Item '+(i+1)+' comment / concern',false,'textarea'],
-    ['priority'+i,'Item '+(i+1)+' priority']
   ]);
   return quotationEditor([...inspectionHeaderFields,...items],inspectionFields(c),'Edit inspection report');
 }
@@ -687,12 +685,25 @@ function attachInspectionEditor(dialog,c) {
     return 'Inspection report saved.';
   },'.inspection-document');
 }
+function confirmedSnagEditor(c){
+  if(c.step!==2)return '';
+  if(!c.snags.length)return '<section class="confirmed-snag-editor"><p>No snag points remain. Record that no reinstatement is required to close this case.</p>'+button('no-work','Confirm no reinstatement required')+'</section>';
+  return '<section class="confirmed-snag-editor"><h3>Review confirmed snag points</h3><p class="meta">Edit or remove points using the client feedback before sending the RFQ. BOQ references and approved rates stay linked to the selected item.</p>'+
+    c.snags.map((snag,index)=>'<form id="confirmedSnag'+index+'" class="confirmed-snag-item"><h4>'+e(snag.ref)+' · '+(snag.source==='Non-BOQ'?'Non-BOQ':'BOQ')+'</h4>'+
+      field('description','Scope / work description','text','value="'+e(snag.description||'')+'"')+
+      field('qty','Qty','number','min=".01" step=".01" value="'+e(snag.qty)+'"')+
+      field('unit','Unit','text','value="'+e(snag.unit||'')+'"')+
+      '<label>Observation / recommended work<textarea name="notes">'+e(snag.notes||'')+'</textarea></label>'+
+      (snag.before?'<p class="meta">A before photo is saved. Select a file only to replace it.</p>':'')+
+      '<label>Replace before photo<input type="file" name="before" accept="image/jpeg,image/png,image/webp"></label>'+
+      '<div class="snag-edit-actions"><button type="submit">Save snag changes</button><button type="button" class="secondary" id="deleteConfirmedSnag'+index+'">Delete snag point</button></div></form>').join('')+'</section>';
+}
 function inspectionReport(c,rfq=false) {
   const details=inspectionFields(c);
   const date=details.date.split('-').reverse().join('/');
   const ackDate=details.ackDate.split('-').reverse().join('/');
   const logo = globalThis.brand?.abfm || 'abfm.jpg';
-  const observations=inspectionItems(c).map((snag,i)=>({...snag,location:details['location'+i],notes:details['notes'+i],priority:details['priority'+i]}));
+  const observations=inspectionItems(c).map((snag,i)=>({...snag,location:details['location'+i],notes:details['notes'+i]}));
   const pages = [];
   for (let offset = 0; offset < observations.length; offset += 2) {
     pages.push(observations.slice(offset, offset + 2));
@@ -708,7 +719,7 @@ function inspectionReport(c,rfq=false) {
     const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
       (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
       '</td><td><strong>'+e(s.location)+'</strong><div class="inspection-comment">'+[s.ref,s.description,s.notes].filter(Boolean).map(e).join('<br>')+'</div></td>'+
-      (rfq?'<td>'+e(s.qty??'')+'</td><td>'+e(s.unit||'')+'</td>':'')+'<td>'+e(s.priority || '')+'</td></tr>').join('');
+      '<td>'+e(s.qty??'')+'</td><td>'+e(s.unit||'')+'</td></tr>').join('');
     const rfqNote=rfq?'<div class="inspection-rfq-notes">'+
       (c.rfq?.deadline?'<p><strong>Quotation deadline:</strong> '+e(c.rfq.deadline)+'</p>':'')+
       (c.rfq?.instructions?'<p><strong>Site instructions:</strong> '+e(c.rfq.instructions)+'</p>':'')+
@@ -719,8 +730,8 @@ function inspectionReport(c,rfq=false) {
       '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(details.building)+'</div><div><strong>Location:</strong> '+e(details.location)+'</div>'+
       '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Task ID:</strong> '+e(details.task||c.inspection||c.id)+'</div><div><strong>Inspector:</strong> '+e(details.engineer)+'</div>'+
       '<div class="inspection-count">Composed of '+pages.length+(pages.length===1?' Page':' Pages')+'</div></div>'+
-      '<table class="inspection-table '+(rfq?'rfq-table':'')+'"><colgroup>'+(rfq?'<col><col><col><col><col><col>':'<col><col><col><col>')+'</colgroup>'+
-      '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th>'+(rfq?'<th scope="col">Qty</th><th scope="col">Unit</th>':'')+'<th scope="col">Priority</th></tr></thead>'+
+      '<table class="inspection-table '+(rfq?'rfq-table':'')+'"><colgroup><col><col><col><col><col></colgroup>'+
+      '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th><th scope="col">Qty</th><th scope="col">Unit</th></tr></thead>'+
       '<tbody>'+observationRows+'</tbody></table>'+(index===pages.length-1?(rfq?rfqNote:'')+acknowledgement:'')+'</section>';
   }).join('');
 }
@@ -1038,7 +1049,7 @@ function render() {
     optionalField('customRate','ABFM BOQ Price (AED) · optional during snagging','number','min="0.01" max="100000000" step=".01"')+
     '<p class="meta">Non-BOQ items are excluded from the 21% BOQ margin check.</p></div>'+
     field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
-  if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
+  if(c.step===2)panel=confirmedSnagEditor(c)+(c.snags.length?form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian'):'');
   if(c.step===3||c.step===4){
     panel='<div class="supplier"><img id="rahati" src="'+(globalThis.brand?.rahati||'rahati.png')+'" alt="Rahati Bayti">Guardian</div>'+
       form('bid',select('supplier','Supplier',suppliers)+field('reference','Quotation reference')+
@@ -1174,6 +1185,26 @@ function render() {
   }
   if ($('previewRahati')) $('previewRahati').onclick=()=>showRahatiQuotation(c,$('bid'));
   bind('vendorReturn',v=>importRahatiBid(c,v.quotation));
+  if(c.step===2)c.snags.forEach((snag,index)=>{
+    bind('confirmedSnag'+index,async values=>{
+      if(c.step!==2)throw Error('Snag points can only be changed before RFQ issuance.');
+      const description=String(values.description||'').trim(),unit=String(values.unit||'').trim(),qty=Number(values.qty);
+      if(!description||!unit||!Number.isFinite(qty)||qty<=0)throw Error('Enter a valid work description, unit and quantity.');
+      const before=values.before?.size?await readPhoto(values.before):snag.before;
+      const oldQuoteRefs=c.bids.map(bid=>bid.reference).filter(Boolean);
+      Object.assign(snag,{description,unit,qty,notes:String(values.notes||'').trim(),before});
+      if(oldQuoteRefs.length){c.bids=[];delete c.award;delete c.awardedBid;delete c.quoteResubmissionRequested;}
+      log(c,'Updated confirmed snag '+snag.ref+(oldQuoteRefs.length?' before RFQ; prior quotations cleared ('+oldQuoteRefs.join(', ')+')':''));
+    });
+    bind('deleteConfirmedSnag'+index,()=>{
+      if(c.step!==2)throw Error('Snag points can only be changed before RFQ issuance.');
+      if(!window.confirm('Delete '+snag.ref+' from the confirmed snag list?'))return;
+      const oldQuoteRefs=c.bids.map(bid=>bid.reference).filter(Boolean);
+      c.snags.splice(index,1);
+      if(oldQuoteRefs.length){c.bids=[];delete c.award;delete c.awardedBid;delete c.quoteResubmissionRequested;}
+      log(c,'Deleted confirmed snag '+snag.ref+(oldQuoteRefs.length?' before RFQ; prior quotations cleared ('+oldQuoteRefs.join(', ')+')':''));
+    });
+  });
   bind('assign',v=>{Object.assign(c,v);move(c,1);});
   bind('rollback',v=>{
     const target=Number(v.targetStep),reason=String(v.reason||'').trim();
