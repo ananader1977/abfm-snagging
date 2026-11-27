@@ -586,7 +586,8 @@ function rahatiQuotationDocument(c,reference,rates,template) {
     '<table class="rahati-totals"><tbody>'+
     [['Total Excluding VAT',subtotalCents],['5% VAT',vatCents],['Total Including VAT',totalCents]].map(([label,value])=>'<tr><th scope="row">'+label+'</th><td>'+money(value/100)+'</td></tr>').join('')+
     '</tbody></table><div class="rahati-terms"><div><strong>General Notes &amp; Special Conditions</strong><p>'+e(details.notes)+'</p></div>'+
-    '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div></div>'+
+    '<div><strong>Terms of Payment</strong><p>'+e(details.payment)+'</p></div><div><strong>Authorized Stamp</strong></div>'+
+    (c.snags.some(line=>line.source==='Non-BOQ')?'<div class="rahati-nonboq-note"><strong>Non-BOQ item instruction</strong><p>Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p></div>':'')+'</div>'+
     '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
     '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div></section>';
@@ -686,7 +687,7 @@ function attachInspectionEditor(dialog,c) {
     return 'Inspection report saved.';
   },'.inspection-document');
 }
-function inspectionReport(c) {
+function inspectionReport(c,rfq=false) {
   const details=inspectionFields(c);
   const date=details.date.split('-').reverse().join('/');
   const ackDate=details.ackDate.split('-').reverse().join('/');
@@ -706,15 +707,21 @@ function inspectionReport(c) {
   return pages.map((page,index)=>{
     const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
       (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
-      '</td><td><strong>'+e(s.location)+'</strong><div class="inspection-comment">'+[s.ref,s.description,s.notes].filter(Boolean).map(e).join('<br>')+'</div></td><td>'+e(s.priority || '')+'</td></tr>').join('');
+      '</td><td><strong>'+e(s.location)+'</strong><div class="inspection-comment">'+[s.ref,s.description,s.notes].filter(Boolean).map(e).join('<br>')+'</div></td>'+
+      (rfq?'<td>'+e(s.qty??'')+'</td><td>'+e(s.unit||'')+'</td>':'')+'<td>'+e(s.priority || '')+'</td></tr>').join('');
+    const rfqNote=rfq?'<div class="inspection-rfq-notes">'+
+      (c.rfq?.deadline?'<p><strong>Quotation deadline:</strong> '+e(c.rfq.deadline)+'</p>':'')+
+      (c.rfq?.instructions?'<p><strong>Site instructions:</strong> '+e(c.rfq.instructions)+'</p>':'')+
+      (c.snags.some(snag=>snag.source==='Non-BOQ')?'<p><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'')+
+      '</div>':'';
     return '<section class="inspection-sheet"><div class="inspection-heading"><img src="'+e(logo)+'" alt="Al Bonian FM">'+
-      '<h2 id="inspection-title-'+index+'">End of Lease Inspection Report</h2></div>'+
+      '<h2 id="inspection-title-'+index+'">'+(rfq?'Request for Quotation (RFQ)':'End of Lease Inspection Report')+'</h2></div>'+
       '<div class="inspection-meta"><div><strong>Building Name:</strong> '+e(details.building)+'</div><div><strong>Location:</strong> '+e(details.location)+'</div>'+
       '<div><strong>Survey Date:</strong> '+e(date)+'</div><div><strong>Task ID:</strong> '+e(details.task||c.inspection||c.id)+'</div><div><strong>Inspector:</strong> '+e(details.engineer)+'</div>'+
       '<div class="inspection-count">Composed of '+pages.length+(pages.length===1?' Page':' Pages')+'</div></div>'+
-      '<table class="inspection-table"><colgroup><col><col><col><col></colgroup>'+
-      '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th><th scope="col">Priority</th></tr></thead>'+
-      '<tbody>'+observationRows+'</tbody></table>'+(index===pages.length-1?acknowledgement:'')+'</section>';
+      '<table class="inspection-table '+(rfq?'rfq-table':'')+'"><colgroup>'+(rfq?'<col><col><col><col><col><col>':'<col><col><col><col>')+'</colgroup>'+
+      '<thead><tr><th scope="col">No</th><th scope="col">Area / Photograph</th><th scope="col">Location / Comment / Concern</th>'+(rfq?'<th scope="col">Qty</th><th scope="col">Unit</th>':'')+'<th scope="col">Priority</th></tr></thead>'+
+      '<tbody>'+observationRows+'</tbody></table>'+(index===pages.length-1?(rfq?rfqNote:'')+acknowledgement:'')+'</section>';
   }).join('');
 }
 
@@ -928,6 +935,7 @@ function workCompletionReport(c){
 }
 function report(c,type) {
   const inspection = type === 'Inspection report';
+  const rfqDocument = type === 'RFQ document';
   const tenant=type==='Tenant quotation';
   const quote=tenant||type==='DP World quotation';
   const wcr=type.includes('WCR');
@@ -938,7 +946,7 @@ function report(c,type) {
   const heads=['No.','Work details','Before photo','After photo','Supplier remarks','Verified status'];
   const lines=wcr?c.snags.map((s,i)=>[i+1,e(s.description),photo(s.before,'Before'),photo(s.after,'After'),e(c.supplierWcr?.lines[i]?.work||''),e(s.result||'Pending Engineer verification')]):[];
   const dialog=document.createElement('dialog');
-  if (inspection) {
+  if (inspection||rfqDocument) {
     dialog.classList.add('inspection-dialog');
     dialog.setAttribute('aria-labelledby','inspection-title-0');
   }
@@ -947,7 +955,7 @@ function report(c,type) {
     dialog.setAttribute('aria-labelledby','quote-title');
   }
   if(wcr)dialog.classList.add('work-completion-dialog');
-  dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : quote ? quotationDocument(c,tenant) : wcr ? workCompletionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
+  dialog.innerHTML=(inspection ? '<div class="inspection-document">'+inspectionReport(c)+'</div>' : rfqDocument ? '<div class="inspection-document">'+inspectionReport(c,true)+'</div>' : quote ? quotationDocument(c,tenant) : wcr ? workCompletionReport(c) : '<h2>'+type+'</h2><p>Client '+e(c.client)+' · Location '+e(c.site)+' · Task ID '+e(c.inspection||c.id)+'</p>'+
     rows(heads,lines))+
     (inspection?inspectionEditor(c)+'<button class="edit-quotation secondary" type="button">Edit inspection report</button> <span class="quote-save-status" role="status"></span> ':'')+
     (quote&&c.step<7?quotationEditor(quotationFieldSpecs.filter(([key])=>!tenant||key!=='contact'),quotationFields(c,tenant))+'<button class="edit-quotation secondary" type="button">Edit quotation details</button> <span class="quote-save-status" role="status"></span> ':'')+
@@ -1022,13 +1030,13 @@ function render() {
   }
   let panel='';
   if(c.step===0)panel=form('assign',field('engineer','ABFM Engineer')+optionalField('engineerEmail','Additional engineer email (optional)','email')+field('date','Inspection date','date'),'Assign inspection');
-  if(c.step===1)panel=form('snag',field('location','Snag location')+select('priority','Priority',['','Low','Medium','High','Urgent'])+select('scopeType','Line item type',['BOQ item','Non-BOQ item'])+
+  if(c.step===1)panel=form('snag',select('scopeType','Line item type',['BOQ item','Non-BOQ item'])+
     '<div id="boqScopeFields">'+field('scopeSearch','Search BOQ scope by description','search','placeholder="e.g. replace floor tiles" autocomplete="off"')+
     '<input type="hidden" name="scopeMatch"><p id="scopeStatus" class="meta" role="status"></p><div id="scopeResults" class="scope-results" aria-label="Matching BOQ scopes"></div>'+
     field('ref','ABFM BOQ reference','text','readonly')+'<div id="ratePreview" class="meta"></div>'+field('unit','Unit of measure')+'</div>'+
     '<div id="nonBoqFields" hidden>'+field('customDescription','Non-BOQ work description')+field('customUnit','Unit of measure')+
     optionalField('customRate','ABFM BOQ Price (AED) · optional during snagging','number','min="0.01" max="100000000" step=".01"')+
-    '<p class="meta">Rahati target budget is calculated as 21% below the ABFM BOQ Price.</p></div>'+
+    '<p class="meta">Non-BOQ items are excluded from the 21% BOQ margin check.</p></div>'+
     field('qty','Measured quantity','number','min=".01" step=".01"')+upload('before','Before photo')+field('notes','Observation / recommended work'),'Add confirmed snag')+(c.snags.length?button('confirm','Publish inspection and confirm snags'):button('no-work','Publish inspection · no reinstatement required'));
   if(c.step===2)panel=form('rfq',field('deadline','Quote deadline','date')+field('instructions','Site instructions'),'Record RFQ to Rahati Bayti and Guardian');
   if(c.step===3||c.step===4){
@@ -1065,7 +1073,7 @@ function render() {
     (c.noWork?'<p>No reinstatement required.</p>':'')+'<p class="error" id="error" role="alert"></p>'+panel+
     (c.bids.length?'<h3>Supplier rate comparison</h3>'+bidComparison(c):'')+
     (c.snags.length?rows(['BOQ reference','Scope','Qty','Evidence','Verification'],c.snags.map(s=>[e(s.ref),e(s.description)+'<br>'+e(s.notes)+(s.source==='Non-BOQ'?(!Number.isFinite(s.rate)?'<br><span class="meta">ABFM selling price can be entered before quotation approval.</span>':''):(!Number.isFinite(s.rate)||!Number.isFinite(s.budget)?'<br><strong class="error">BOQ pricing needs review before RFQ</strong>':'')),s.qty+' '+e(s.unit),photo(s.before,'Before')+photo(s.after,'After'),e(s.result||'Pending')])):'')+
-    (c.published||(c.step===1&&c.snags.length)?button('inspectionReport','Inspection report')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
+    (c.published||(c.step===1&&c.snags.length)?button('inspectionReport','Inspection report')+' ':'')+(c.published&&c.snags.length?button('rfqDocument','RFQ document · Print PDF')+' ':'')+(c.award?button('clientQuote','DP World quotation · Print PDF')+' '+button('tenantQuote','Tenant quotation · Print PDF')+' ':'')+
     (c.bids.length?button('quoteSummary','Download quotation summary · Excel')+' ':'')+
     (c.wcr?button('completion',c.step===11?'Final WCR':'Partial / draft WCR'):'')+rollbackPanel+
     '<details><summary>Activity history</summary><ul>'+c.history.map(h=>'<li>'+e(new Date(h.time).toLocaleString('en-AE',{timeZone:'Asia/Dubai'}))+' · '+e(h.event)+'</li>').join('')+'</ul></details></article>';
@@ -1195,7 +1203,7 @@ function render() {
       if(!unit)throw Error('Enter the unit of measure for this BOQ scope.');
       item={...line,source:line.source||'BOQ',unit};
     }
-    Object.assign(item,{location:v.location,notes:v.notes,priority:v.priority,qty:Number(v.qty),before:await readPhoto(v.before)});
+    Object.assign(item,{notes:v.notes,qty:Number(v.qty),before:await readPhoto(v.before)});
     c.snags.push(item);
     log(c,'Engineer confirmed '+item.ref+(item.source==='Non-BOQ'?' · Non-BOQ item':''));
   });
@@ -1278,7 +1286,7 @@ function render() {
     log(c,'Reinspection on '+v.inspectionDate+' by '+engineer+' · '+v.remarks+' · '+c.snags.map(s=>s.ref+' '+s.result).join(', '));
     move(c,c.snags.every(s=>s.result==='Pass')?11:9);
   });
-  for(const [id,type] of [['inspectionReport','Inspection report'],['clientQuote','DP World quotation'],['tenantQuote','Tenant quotation'],['completion',c.step===11?'Final WCR':'Partial / draft WCR']]){
+  for(const [id,type] of [['inspectionReport','Inspection report'],['rfqDocument','RFQ document'],['clientQuote','DP World quotation'],['tenantQuote','Tenant quotation'],['completion',c.step===11?'Final WCR':'Partial / draft WCR']]){
     if($(id))$(id).onclick=()=>report(c,type);
   }
 }

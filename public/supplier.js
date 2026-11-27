@@ -35,10 +35,12 @@ function wireSubmit(form,handler){
   };
 }
 function quotationForm(record,c){
+  const hasNonBoq=record.items.some(line=>line.source==='Non-BOQ');
+  const nonBoqNotice=hasNonBoq?'<p class="supplier-discount-notice"><strong>Non-BOQ item instruction:</strong> Enter your net rate after applying a 10% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p>':'';
   const inputs=record.items.map((line,i)=>field('rate'+i,e(line.ref)+' · '+e(line.description)+' · '+
     (Number.isFinite(line.vendorBudget)?'Target budget '+money(line.vendorBudget):'Non-BOQ · excluded from target')+' · Qty '+line.qty,'number',
     'min="0" max="100000000" step=".01" value="'+(Number.isFinite(line.vendorBudget)?line.vendorBudget:'')+'"')).join('');
-  return '<p>'+e(record.instructions||'')+'</p><form id="supplierQuote">'+field('reference','Quotation reference')+inputs+
+  return '<p>'+e(record.instructions||'')+'</p>'+nonBoqNotice+'<form id="supplierQuote">'+field('reference','Quotation reference')+inputs+
     '<p id="supplierTarget" role="status"></p><label>Quotation format<select name="template"><option value="detailed">Detailed RFQ and rectification</option><option value="standard">Standard service quotation</option></select></label>'+
     '<button id="supplierPreview" type="button">Preview quotation</button><button type="submit">Submit quotation</button></form>';
 }
@@ -133,7 +135,7 @@ function renderAssigned(message){
   if(!record){detail.innerHTML='<article><h1>No supplier cases available</h1>'+banner+'</article>';return;}
   const c={id:record.id,site:record.site,client:record.client,contact:record.contact,building:record.building,
     inspection:record.inspection,reinstatement:record.reinstatement,request:record.request,quotationReference:record.quotationReference,
-    order:record.order,started:record.started,submitted:record.submitted,award:'Rahati Bayti',snags:record.items,rfq:{instructions:record.instructions}};
+    order:record.order,started:record.started,submitted:record.submitted,award:'Rahati Bayti',snags:record.items,rfq:{instructions:record.instructions,deadline:record.deadline}};
   const stageTitle=stageNames[record.step]||'Case';
   const quotationCards=(record.quotations||[]).map((quotation,index)=>
     '<section class="supplier-submitted-quote"><h2>Rahati quotation · '+e(quotation.reference)+(index===record.quotations.length-1&&record.quotations.length>1?' · Latest submission':'')+'</h2>'+
@@ -141,6 +143,7 @@ function renderAssigned(message){
   const signedWcr=record.supplierReport?'<section><h2>Submitted signed WCR</h2><p>'+e(record.supplierReport.reference)+'</p>'+
     '<button type="button" id="viewSupplierSignedWcr">View / print signed WCR</button></section>':'';
   detail.innerHTML='<article><h1>'+e(record.site)+'</h1><p>'+e(record.id)+' · Current stage: <strong>'+e(stageTitle)+'</strong></p>'+banner+
+    (record.step>=3&&record.items?.length?'<button type="button" id="viewRfqDocument">RFQ document · Print / Save PDF</button> ':'')+
     (record.quotations?.length?quotationCards:'')+signedWcr+
     rows(['BOQ Ref.','Scope','Unit','Qty','Before photo'],record.items.map(line=>[
       e(line.ref),e(line.description),e(line.unit),line.qty,photo(line.before,'Before')
@@ -155,6 +158,8 @@ function renderAssigned(message){
   });
   const viewWcr=$('viewSupplierSignedWcr');
   if(viewWcr)viewWcr.onclick=()=>viewSubmittedWcr(c,record);
+  const viewRfq=$('viewRfqDocument');
+  if(viewRfq)viewRfq.onclick=()=>report(c,'RFQ document');
   const quote=$('supplierQuote');
   if(quote){
     const rates=()=>record.items.map((_,i)=>readRate(quote.elements['rate'+i].value));

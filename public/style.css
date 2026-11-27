@@ -194,3 +194,5 @@
   .client-wcr-item,.client-wcr-photo,.client-wcr-item-description{break-inside:avoid}
   .inspection-signature-grid,.quote-signatures{break-inside:avoid}
 }
+
+.inspection-rfq-notes{margin-top:10px;border:1px solid #333;padding:8px;font-size:12px}.inspection-rfq-notes p{margin:4px 0}.rfq-table col:nth-child(1){width:5%}.rfq-table col:nth-child(2){width:28%}.rfq-table col:nth-child(3){width:34%}.rfq-table col:nth-child(4){width:8%}.rfq-table col:nth-child(5){width:10%}.rfq-table col:nth-child(6){width:15%}.rfq-table :is(th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6)){text-align:center}.supplier-discount-notice,.rahati-nonboq-note{border-left:4px solid #bd3a00;background:#fff4ed;padding:10px;color:#532000}.rahati-nonboq-note p{margin:5px 0}
