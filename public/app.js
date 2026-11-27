@@ -987,7 +987,9 @@ function bidComparison(c) {
   const rahati=c.bids.filter(bid=>bid.supplier==='Rahati Bayti'),latest=rahati.at(-1);
   const uplift=budgetUplift(c,latest);
   const summary=uplift?.applicable?'<p>BOQ Rahati quotation subtotal '+money(uplift.budget/100)+' · BOQ ABFM selling subtotal '+money(uplift.selling/100)+' · '+((uplift.selling/uplift.budget-1)*100).toFixed(2)+'% uplift'+(uplift.meets?' · Meets the 21% BOQ rule':'')+'</p>':'';
-  return summary+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
+  const targetNotice=latest?rahatiBudgetNotice(c,latest.rates,c.snags.map(s=>vendorBudget(s,activeBoq()))):null;
+  const targetFlag=targetNotice?'<p class="'+(targetNotice.over?'error':'meta')+'">Rahati BOQ target check: '+e(targetNotice.text)+'</p>':'';
+  return summary+targetFlag+rows(['Supplier / quotation','ABFM Ref.','Vendor Budget','Quoted rate','ABFM BOQ Price','Pricing check'],c.bids.flatMap(b=>c.snags.map((s,i)=>{
         const rate=b.rates[i], changed=b.supplier==='Rahati Bayti'&&changedRate(s,rate),isLatest=rahati.length>1&&b===latest;
         const quoteRate=isLatest?'<strong class="latest-rahati-rate">'+money(rate)+'</strong>'+(changed?' <span class="error">Changed from Vendor Budget</span>':'')+' <span class="latest-rahati-label">Latest Rahati submission</span>':
           changed?'<strong class="error">'+money(rate)+' · Changed</strong>':money(rate);

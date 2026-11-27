@@ -168,10 +168,12 @@ function renderAssigned(message){
       if(!Number.isFinite(record.targetBudget)){target.textContent='Overall target budget is unavailable.';return;}
       const base='Overall target budget: '+money(record.targetBudget)+' before VAT.';
       if(current.some(rate=>rate===null)){target.textContent=base+' Enter all rates to check your quotation.';return;}
-      const subtotal=rahatiQuoteTotals(c,current).subtotalCents/100;
-      const over=subtotal>record.targetBudget;
+      const boqLines=record.items.map((line,index)=>({line,index})).filter(({line})=>line.source!=='Non-BOQ'&&!String(line.ref||'').startsWith('NBOQ-'));
+      const subtotalCents=boqLines.reduce((sum,{line,index})=>sum+Math.round(Number(current[index])*Number(line.qty)*100),0);
+      const subtotal=subtotalCents/100;
+      const over=subtotalCents>Math.round(record.targetBudget*100);
       target.classList.toggle('error',over);
-      target.textContent=base+' Your subtotal: '+money(subtotal)+'. '+(over?'Review your rates before submitting.':'Your quotation is within the target.');
+      target.textContent=base+' Your BOQ subtotal: '+money(subtotal)+'. Non-BOQ items are excluded. '+(over?'Your BOQ subtotal exceeds the target. Review your rates before submitting.':'Your BOQ quotation is within the target.');
     };
     quote.addEventListener('input',update);
     update();
