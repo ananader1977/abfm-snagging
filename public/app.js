@@ -341,7 +341,7 @@ function dpwQuotationWorkbookData(c,tenant=false){
   for(let col=1;col<=count;col++)styleCells[String.fromCharCode(64+col)+remarks]=3;
   merged.push('A'+(remarks+1)+':'+String.fromCharCode(64+count)+(remarks+1));
   const signRow=remarks+3,split=tenant?2:4;
-  put(signRow,1,'Al Bonian FM Representative',3);put(signRow,split+1,'Rahati Bayti Representative',3);
+  put(signRow,1,'Al Bonian FM Representative',3);put(signRow,split+1,'Authorized Signatory',3);
   put(signRow+1,1,'Signature: __________________    Date: __________',4);
   put(signRow+1,split+1,'Signature: __________________    Date: __________',4);
   merged.push('A'+signRow+':'+String.fromCharCode(64+split)+signRow,
@@ -590,7 +590,7 @@ function rahatiQuotationDocument(c,reference,rates,template) {
     (c.snags.some(line=>line.source==='Non-BOQ')?'<div class="rahati-nonboq-note"><strong>Non-BOQ item instruction</strong><p>Enter your net rate after applying a 20% discount to the quoted price. ABFM Procurement will issue the LPO for these lines at the discounted rate.</p></div>':'')+'</div>'+
     '<div class="rahati-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
-    '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div></section>';
+    '<div><strong>Authorized Signatory</strong><span class="quote-sign-line"></span><span>Signature · Date: __________</span></div></div></section>';
 }
 function showRahatiQuotation(c,bidForm) {
   const formData=new FormData(bidForm);
@@ -714,7 +714,7 @@ function inspectionReport(c,rfq=false) {
     '<p>Lessee Name &amp; Signature: '+e(details.lessee)+' ________________________________________</p>'+
     '<p>Date: '+e(ackDate||'____________________')+'</p>'+
     '<div class="inspection-signature-grid"><div><strong>Al Bonian FM</strong><p>'+e(details.engineer||'')+'</p><span>Signature: ____________________</span><span>Date: ______________</span></div>'+
-    '<div><strong>Rahati Bayti</strong><p>Authorized Representative</p><span>Signature: ____________________</span><span>Date: ______________</span></div></div></section>';
+    '<div><strong>Authorized Signatory</strong><span>Signature: ____________________</span><span>Date: ______________</span></div></div></section>';
   return pages.map((page,index)=>{
     const observationRows = page.map((s,i)=>'<tr><td>'+(index*2+i+1)+'</td><td>'+
       (s.before ? '<img class="inspection-photo" src="'+e(s.before)+'" alt="Inspection photograph for '+e(s.location)+'">' : '')+
@@ -854,7 +854,7 @@ function quotationDocument(c,tenant) {
     '<table class="quote-totals"><tbody>'+totals.map(([label,number])=>'<tr><th scope="row">'+label+'</th><td>'+displayAmount(number)+'</td></tr>').join('')+'</tbody></table>'+
     '<div class="quote-remarks"><strong>Remarks:</strong><div>'+e(details.remarks)+'</div></div>'+
     '<div class="quote-signatures"><div><strong>Al Bonian FM</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div>'+
-    '<div><strong>Rahati Bayti</strong><span class="quote-sign-line"></span><span>Authorized Signatory · Date: __________</span></div></div>'+
+    '<div><strong>Authorized Signatory</strong><span class="quote-sign-line"></span><span>Signature · Date: __________</span></div></div>'+
     '<div class="quote-footer"><span>Document Code: ABFM-ADM-QUO-001-2022-00<br>Rev. 0</span><span>Classification: Quotation</span><span>Issue No.: 1 Date: 29 Aug. 2022</span></div></section>';
 }
 
@@ -900,7 +900,7 @@ function reinspectionSignatures(c,submission,verification) {
   };
   return '<section class="wcr-signatures"><h3>Reinspection sign-off</h3>'+
     '<p><strong>Date of inspection:</strong> '+e(date)+'</p>'+
-    '<p><strong>'+e(c.award||'Rahati Bayti')+' signature:</strong> '+signature(supplier,'Supplier')+'</p>'+
+    '<p><strong>Authorized Signatory signature:</strong> '+signature(supplier,'Supplier')+'</p>'+
     '<p><strong>ABFM Engineer signature:</strong> '+signature(engineer,'ABFM Engineer')+'</p>'+
     (verification?.engineer?'<p><strong>ABFM Engineer:</strong> '+e(verification.engineer)+'</p>':'')+'</section>';
 }
